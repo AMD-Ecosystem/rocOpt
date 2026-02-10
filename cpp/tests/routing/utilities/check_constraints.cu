@@ -1,9 +1,13 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
+
+// Include <cstring> early to fix rocprim memset() resolution issue
+#include <cstring>
 
 #include <routing/utilities/test_utilities.hpp>
 #include "check_constraints.hpp"

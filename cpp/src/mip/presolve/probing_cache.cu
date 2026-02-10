@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -180,7 +181,7 @@ void inline insert_current_probing_to_cache(i_t var_idx,
   }
   {
     std::lock_guard<std::mutex> lock(bound_presolve.probing_cache.probing_cache_mutex);
-    if (!bound_presolve.probing_cache.probing_cache.count(var_idx) > 0) {
+    if (bound_presolve.probing_cache.probing_cache.count(var_idx) == 0) {
       std::array<cache_entry_t<i_t, f_t>, 2> entries_per_var;
       entries_per_var[0] = cache_item;
       bound_presolve.probing_cache.probing_cache.insert({var_idx, entries_per_var});
@@ -369,7 +370,7 @@ void compute_cache_for_var(i_t var_idx,
                            timer_t timer,
                            i_t device_id)
 {
-  RAFT_CUDA_TRY(cudaSetDevice(device_id));
+  RAFT_CUDA_TRY(hipSetDevice(device_id));
   // test if we need per thread handle
   raft::handle_t handle{};
   std::vector<f_t> h_improved_lower_bounds_0(h_var_bounds.size());
@@ -747,7 +748,7 @@ std::vector<i_t> compute_priority_indices_by_implied_integers(problem_t<i_t, f_t
   // keeps the number of constraints that contain integer variables
   rmm::device_uvector<i_t> num_int_vars_per_constraint(problem.n_constraints,
                                                        problem.handle_ptr->get_stream());
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage,
+  hipcub::DeviceSegmentedReduce::Reduce(d_temp_storage,
                                      temp_storage_bytes,
                                      input_transform_it,
                                      num_int_vars_per_constraint.data(),
@@ -763,7 +764,7 @@ std::vector<i_t> compute_priority_indices_by_implied_integers(problem_t<i_t, f_t
   d_temp_storage = thrust::raw_pointer_cast(temp_storage.data());
 
   // Run reduction
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage,
+  hipcub::DeviceSegmentedReduce::Reduce(d_temp_storage,
                                      temp_storage_bytes,
                                      input_transform_it,
                                      num_int_vars_per_constraint.data(),
@@ -785,7 +786,7 @@ std::vector<i_t> compute_priority_indices_by_implied_integers(problem_t<i_t, f_t
   // run second reduction operation, reset sizes so query works correctly
   d_temp_storage     = nullptr;
   temp_storage_bytes = 0;
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage,
+  hipcub::DeviceSegmentedReduce::Reduce(d_temp_storage,
                                      temp_storage_bytes,
                                      input_transform_it_2,
                                      count_per_variable.data(),
@@ -800,7 +801,7 @@ std::vector<i_t> compute_priority_indices_by_implied_integers(problem_t<i_t, f_t
   d_temp_storage = thrust::raw_pointer_cast(temp_storage.data());
 
   // Run reduction
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage,
+  hipcub::DeviceSegmentedReduce::Reduce(d_temp_storage,
                                      temp_storage_bytes,
                                      input_transform_it_2,
                                      count_per_variable.data(),

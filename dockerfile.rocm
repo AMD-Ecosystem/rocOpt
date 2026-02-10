@@ -1,0 +1,91 @@
+# syntax=docker/dockerfile:1.2
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# ROCm-based Docker image with Miniforge3
+# Base image: ROCm development environment on Ubuntu 24.04
+
+FROM rocm/dev-ubuntu-24.04:7.1.1-complete
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV MINIFORGE_VERSION=latest
+ENV CONDA_DIR=/root/miniforge3
+
+# ROCm environment - handle both versioned and symlink paths
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm
+ENV HIP_PLATFORM=amd
+
+# CMake HIP compiler variables
+# ROCm 7.x uses amdclang++ which has better ROCm integration
+ENV CMAKE_HIP_COMPILER=/opt/rocm/bin/amdclang++
+ENV CMAKE_CXX_COMPILER=/opt/rocm/bin/amdclang++
+ENV CMAKE_C_COMPILER=/opt/rocm/bin/amdclang
+ENV CC=/opt/rocm/bin/amdclang
+ENV CXX=/opt/rocm/bin/amdclang++
+ENV CMAKE_HIP_COMPILER_ROCM_ROOT=/opt/rocm
+
+# Add both possible ROCm locations to CMAKE_PREFIX_PATH
+ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake:/opt/rocm-7.1.1:/opt/rocm-7.1.1/lib/cmake:${CMAKE_PREFIX_PATH}
+
+# Update PATH and library paths for ROCm
+ENV PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:/opt/rocm-7.1.1/bin:/opt/rocm-7.1.1/llvm/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:/opt/rocm-7.1.1/lib:/opt/rocm-7.1.1/lib64:${LD_LIBRARY_PATH}
+
+# Update system and install dependencies
+# Note: Using -complete base image which includes all ROCm dev libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    bzip2 \
+    git \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify ROCm installation and create diagnostic output
+RUN echo "=== ROCm Installation Check ===" && \
+    ls -la /opt/ && \
+    echo "=== ROCm CMake Modules ===" && \
+    find /opt/rocm* -name "*Config.cmake" -o -name "*-config.cmake" 2>/dev/null | grep -E "(hipblas|hipsparse|hip-lang|rocthrust)" | head -20 || true && \
+    echo "=== ROCm binaries ===" && \
+    ls -la /opt/rocm*/bin/ | head -20 || true
+
+# Download and install Miniforge3
+RUN curl -L -O https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+    && bash Miniforge3-Linux-x86_64.sh -b -p ${CONDA_DIR} \
+    && rm -f Miniforge3-Linux-x86_64.sh
+
+# Add conda to PATH
+ENV PATH="${CONDA_DIR}/bin:${PATH}"
+
+# Initialize conda for bash
+RUN ${CONDA_DIR}/bin/conda init bash
+
+# Reset environment variable
+ENV DEBIAN_FRONTEND=""
+
+# Set default shell to bash
+SHELL ["/bin/bash", "-c"]
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy conda environment file and requirements
+COPY conda/environments/all_rocm7.yaml /workspace/conda/environments/all_rocm7.yaml
+COPY requirements.txt /workspace/requirements.txt
+
+# Create conda environment from yaml file
+RUN source ${CONDA_DIR}/bin/activate && \
+    conda env create --name cuopt_dev --file conda/environments/all_rocm7.yaml && \
+    conda clean -afy
+
+# Activate conda environment and install pip requirements
+RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    pip install -r requirements.txt
+
+# Set conda environment to activate by default
+RUN echo "source ${CONDA_DIR}/bin/activate cuopt_dev" >> ~/.bashrc
+
+# Default command
+CMD ["/bin/bash"]

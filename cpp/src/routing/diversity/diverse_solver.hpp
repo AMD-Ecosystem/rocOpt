@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -21,7 +22,7 @@
 #include "../solution/pool_allocator.cuh"
 #include "../utilities/env_utils.hpp"
 
-#include <cuda_profiler_api.h>
+#include <hip/hip_runtime_api.h>
 
 #include <array>
 #include <filesystem>

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -10,7 +11,7 @@
 #include "vrp_execute.cuh"
 #include "vrp_search.cuh"
 
-#include <cooperative_groups.h>
+#include <hip/hip_cooperative_groups.h>
 
 namespace cuopt {
 namespace routing {
@@ -431,7 +432,7 @@ bool execute_vrp_moves(solution_t<i_t, f_t, REQUEST>& sol,
   i_t TPB            = 64;
   i_t n_blocks       = n_moves_found * 2;
   i_t numBlocksPerSm = 0;
-  cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+  hipOccupancyMaxActiveBlocksPerMultiprocessor(
     &numBlocksPerSm, execute_vrp_moves_kernel<i_t, f_t, REQUEST>, TPB, 0);
   // if the number of blocks are larger than the gpu can hold, only execute the max fitting moves
   n_blocks            = std::min(n_blocks,
@@ -449,7 +450,7 @@ bool execute_vrp_moves(solution_t<i_t, f_t, REQUEST>& sol,
   cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
   // FIXME:: Cuda graph is turned off for now because of the assertions triggering in CUDA 12 builds
   // running on V100 move_candidates.vrp_execute_graph.start_capture(sol.sol_handle->get_stream());
-  cudaLaunchCooperativeKernel((void*)execute_vrp_moves_kernel<i_t, f_t, REQUEST>,
+  hipLaunchCooperativeKernel((void*)execute_vrp_moves_kernel<i_t, f_t, REQUEST>,
                               dimGrid,
                               dimBlock,
                               kernelArgs,

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -11,7 +12,7 @@
 #include "local_search.cuh"
 
 #include <thrust/pair.h>
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 namespace cuopt {
 namespace routing {
@@ -425,7 +426,7 @@ void resize_temp_storage(solution_t<i_t, f_t, REQUEST>& sol,
                          size_t& temp_storage_bytes)
 {
   auto distances_ptr = sol.get_route(0).dimensions.distance_dim.distance_forward.data();
-  cub::DeviceScan::ExclusiveSum(static_cast<void*>(nullptr),
+  hipcub::DeviceScan::ExclusiveSum(static_cast<void*>(nullptr),
                                 temp_storage_bytes,
                                 distances_ptr,
                                 distances_ptr,
@@ -458,7 +459,7 @@ void compute_cumulative_distances(solution_t<i_t, f_t, REQUEST>& sol,
   }
 
   size_t n_temp_storage_bytes = 0;
-  cub::DeviceScan::ExclusiveSum(static_cast<void*>(nullptr),
+  hipcub::DeviceScan::ExclusiveSum(static_cast<void*>(nullptr),
                                 n_temp_storage_bytes,
                                 distances_ptr,
                                 distances_ptr,
@@ -471,7 +472,7 @@ void compute_cumulative_distances(solution_t<i_t, f_t, REQUEST>& sol,
                   "Cannot resize when using cuda graphs");
   }
 
-  cub::DeviceScan::ExclusiveSum(move_candidates.temp_storage.data(),
+  hipcub::DeviceScan::ExclusiveSum(move_candidates.temp_storage.data(),
                                 temp_storage_bytes,
                                 distances_ptr,
                                 distances_ptr,

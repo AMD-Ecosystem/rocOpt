@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -635,7 +636,7 @@ void initialize_incompatible(problem_t<i_t, f_t>& problem, solution_t<i_t, f_t, 
     initialize_incompatible_kernel<i_t, f_t, request_t::PDP>
       <<<n_blocks, TPB, 0, handle_ptr->get_stream()>>>(
         problem.view(), viables.compatibility_matrix.data(), sol_view);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_ptr->get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_ptr->get_stream()));
     n_blocks = (problem.get_num_orders() * problem.get_num_orders() - 1 + TPB) / TPB;
     initialize_viable_kernel<i_t, f_t, request_t::PDP>
       <<<n_blocks, TPB, 0, handle_ptr->get_stream()>>>(problem.view(),
@@ -649,12 +650,12 @@ void initialize_incompatible(problem_t<i_t, f_t>& problem, solution_t<i_t, f_t, 
                                                        viables.n_viable_from_deliveries.data(),
                                                        sol_view,
                                                        is_problem_run);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_ptr->get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_ptr->get_stream()));
   } else {
     initialize_incompatible_kernel<i_t, f_t, request_t::VRP>
       <<<n_blocks, TPB, 0, handle_ptr->get_stream()>>>(
         problem.view(), viables.compatibility_matrix.data(), sol_view);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_ptr->get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_ptr->get_stream()));
     n_blocks = (problem.get_num_orders() * problem.get_num_orders() - 1 + TPB) / TPB;
     initialize_viable_kernel<i_t, f_t, request_t::VRP>
       <<<n_blocks, TPB, 0, handle_ptr->get_stream()>>>(problem.view(),
@@ -668,7 +669,7 @@ void initialize_incompatible(problem_t<i_t, f_t>& problem, solution_t<i_t, f_t, 
                                                        viables.n_viable_from_deliveries.data(),
                                                        sol_view,
                                                        is_problem_run);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_ptr->get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_ptr->get_stream()));
   }
   problem.sort_viable_matrix(viables.viable_to_pickups, viables.viable_from_pickups);
   problem.sort_viable_matrix(viables.viable_to_deliveries, viables.viable_from_deliveries);

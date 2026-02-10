@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -6,6 +7,7 @@
 /* clang-format on */
 
 #include <routing/arc_value.hpp>
+#include <utilities/cuda_helpers.cuh>
 
 #include <raft/random/rng.cuh>
 

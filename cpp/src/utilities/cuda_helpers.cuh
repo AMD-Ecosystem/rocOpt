@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -15,9 +16,62 @@
 #include <raft/util/cuda_utils.cuh>
 #include <raft/util/cudart_utils.hpp>
 #include <rmm/device_uvector.hpp>
-#include <rmm/mr/cuda_async_memory_resource.hpp>
-#include <rmm/mr/limiting_resource_adaptor.hpp>
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <rmm/mr/device/limiting_resource_adaptor.hpp>
 #include <unordered_map>
+
+// Block-scoped atomics for HIP using libhipcxx
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_PLATFORM_HCC__) || defined(__HIPCC__)
+#include <cuda/atomic>
+
+// Block-scoped atomic operations using libhipcxx
+template <typename T>
+__device__ inline T atomicAdd_block_hip(T* addr, T val) {
+  cuda::atomic_ref<T, cuda::thread_scope_block> ref(*addr);
+  return ref.fetch_add(val, cuda::memory_order_relaxed);
+}
+
+template <typename T>
+__device__ inline T atomicCAS_block_hip(T* addr, T compare, T val) {
+  cuda::atomic_ref<T, cuda::thread_scope_block> ref(*addr);
+  ref.compare_exchange_strong(compare, val, cuda::memory_order_relaxed);
+  return compare;
+}
+
+template <typename T>
+__device__ inline T atomicExch_block_hip(T* addr, T val) {
+  cuda::atomic_ref<T, cuda::thread_scope_block> ref(*addr);
+  return ref.exchange(val, cuda::memory_order_relaxed);
+}
+
+template <typename T>
+__device__ inline T atomicMax_block_hip(T* addr, T val) {
+  cuda::atomic_ref<T, cuda::thread_scope_block> ref(*addr);
+  return ref.fetch_max(val, cuda::memory_order_relaxed);
+}
+
+template <typename T>
+__device__ inline T atomicMin_block_hip(T* addr, T val) {
+  cuda::atomic_ref<T, cuda::thread_scope_block> ref(*addr);
+  return ref.fetch_min(val, cuda::memory_order_relaxed);
+}
+
+#ifndef atomicAdd_block
+#define atomicAdd_block(addr, val) atomicAdd_block_hip(addr, val)
+#endif
+#ifndef atomicCAS_block
+#define atomicCAS_block(addr, cmp, val) atomicCAS_block_hip(addr, cmp, val)
+#endif
+#ifndef atomicExch_block
+#define atomicExch_block(addr, val) atomicExch_block_hip(addr, val)
+#endif
+#ifndef atomicMax_block
+#define atomicMax_block(addr, val) atomicMax_block_hip(addr, val)
+#endif
+#ifndef atomicMin_block
+#define atomicMin_block(addr, val) atomicMin_block_hip(addr, val)
+#endif
+#endif // HIP platform check
 
 namespace cuopt {
 
@@ -46,7 +100,13 @@ DI bool acquire_lock(i_t* lock)
   return res == 0;
 #else
   while (atomicCAS(lock, 0, 1)) {
+#ifdef __HIP_PLATFORM_AMD__
+    // ROCm: Use s_sleep (sleep for ~100 cycles)
+    // __builtin_amdgcn_s_sleep takes cycles/64 as argument
+    __builtin_amdgcn_s_sleep(2); // ~128 cycles
+#else
     __nanosleep(100);
+#endif
   }
   __threadfence();
   return true;
@@ -75,7 +135,12 @@ DI bool acquire_lock_block(i_t* lock)
   return try_acquire_lock_block(lock);
 #else
   while (atomicCAS_block(lock, 0, 1)) {
+#ifdef __HIP_PLATFORM_AMD__
+    // ROCm: Use s_sleep (sleep for ~100 cycles)
+    __builtin_amdgcn_s_sleep(2); // ~128 cycles
+#else
     __nanosleep(100);
+#endif
   }
   __threadfence_block();
   return true;
@@ -188,10 +253,10 @@ inline bool set_shmem_of_kernel(Function* function, size_t dynamic_request_size)
       current_size = shmem_sizes[function];
 
       if (dynamic_request_size > current_size) {
-        cudaFuncSetAttribute(
-          function, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_request_size);
+        RAFT_CUDA_TRY(hipFuncSetAttribute(reinterpret_cast<const void*>(
+          function), hipFuncAttributeMaxDynamicSharedMemorySize, dynamic_request_size));
         shmem_sizes[function] = dynamic_request_size;
-        return (cudaSuccess == cudaGetLastError());
+        return (hipSuccess == hipGetLastError());
       }
     }
   }
@@ -217,7 +282,7 @@ inline size_t get_device_memory_size()
 {
   // Otherwise, we need to get the free memory from the device
   size_t free_mem, total_mem;
-  cudaMemGetInfo(&free_mem, &total_mem);
+  RAFT_CUDA_TRY(hipMemGetInfo(&free_mem, &total_mem));
 
   auto res = rmm::mr::get_current_device_resource();
   auto limiting_adaptor =

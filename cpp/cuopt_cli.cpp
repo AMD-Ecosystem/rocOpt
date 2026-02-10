@@ -14,7 +14,7 @@
 #include <raft/core/device_setter.hpp>
 #include <raft/core/handle.hpp>
 
-#include <rmm/mr/cuda_async_memory_resource.hpp>
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
 
 #include <unistd.h>
 #include <argparse/argparse.hpp>

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -46,25 +47,39 @@ namespace cuopt::linear_programming::dual_simplex {
 [[maybe_unused]] static void pairwise_multiply(
   float* a, float* b, float* out, int size, rmm::cuda_stream_view stream)
 {
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(a, b), out, size, cuda::std::multiplies<>{}, stream.value());
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(a, b)),
+    out,
+    size,
+    [] __host__ __device__(thrust::tuple<float, float> t) {
+      return thrust::get<0>(t) * thrust::get<1>(t);
+    },
+    stream.value());
 }
 
 [[maybe_unused]] static void pairwise_multiply(
   double* a, double* b, double* out, int size, rmm::cuda_stream_view stream)
 {
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(a, b), out, size, cuda::std::multiplies<>{}, stream.value());
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(a, b)),
+    out,
+    size,
+    [] __host__ __device__(thrust::tuple<double, double> t) {
+      return thrust::get<0>(t) * thrust::get<1>(t);
+    },
+    stream.value());
 }
 
 [[maybe_unused]] static void axpy(
   float alpha, float* x, float beta, float* y, float* out, int size, rmm::cuda_stream_view stream)
 {
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(x, y),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(x, y)),
     out,
     size,
-    [alpha, beta] __host__ __device__(float a, float b) { return alpha * a + beta * b; },
+    [alpha, beta] __host__ __device__(thrust::tuple<float, float> t) {
+      return alpha * thrust::get<0>(t) + beta * thrust::get<1>(t);
+    },
     stream.value());
 }
 
@@ -76,11 +91,13 @@ namespace cuopt::linear_programming::dual_simplex {
                                   int size,
                                   rmm::cuda_stream_view stream)
 {
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(x, y),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(x, y)),
     out,
     size,
-    [alpha, beta] __host__ __device__(double a, double b) { return alpha * a + beta * b; },
+    [alpha, beta] __host__ __device__(thrust::tuple<double, double> t) {
+      return alpha * thrust::get<0>(t) + beta * thrust::get<1>(t);
+    },
     stream.value());
 }
 
@@ -255,7 +272,7 @@ class iteration_data_t {
     }
 
     // Allocating GPU flag data for Form ADAT
-    RAFT_CUDA_TRY(cub::DeviceSelect::Flagged(
+    RAFT_CUDA_TRY(hipcub::DeviceSelect::Flagged(
       nullptr,
       flag_buffer_size,
       d_inv_diag_prime.data(),  // Not the actual input but just to allcoate the memory
@@ -396,8 +413,17 @@ class iteration_data_t {
 
     if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) { return; }
     i_t factorization_size = use_augmented ? lp.num_rows + lp.num_cols : lp.num_rows;
+    
+#if USE_CUDSS
     chol =
       std::make_unique<sparse_cholesky_cudss_t<i_t, f_t>>(handle_ptr, settings, factorization_size);
+#else
+    // cuDSS not available on ROCm - barrier method disabled
+    throw std::runtime_error(
+      "Barrier method requires cuDSS library (NVIDIA GPU only). "
+      "For ROCm/AMD GPUs, use simplex or PDLP solver instead.");
+#endif
+    
     chol->set_positive_definite(false);
     if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) { return; }
     // Perform symbolic analysis
@@ -552,7 +578,7 @@ class iteration_data_t {
       // Adjust inv_diag
       d_inv_diag_prime.resize(AD.n, stream_view_);
       // Copy If
-      cub::DeviceSelect::Flagged(
+      hipcub::DeviceSelect::Flagged(
         d_flag_buffer.data(),
         flag_buffer_size,
         d_inv_diag.data(),
@@ -1349,11 +1375,12 @@ class iteration_data_t {
     cusparse_view.transpose_spmv(1.0, cusparse_y, 0.0, cusparse_u);
 
     // u = Dinv * u
-    cub::DeviceTransform::Transform(cuda::std::make_tuple(u.data(), d_inv_diag.data()),
-                                    u.data(),
-                                    u.size(),
-                                    cuda::std::multiplies<>{},
-                                    stream_view_.value());
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(u.data(), d_inv_diag.data())),
+      u.data(),
+      u.size(),
+      [] HD(auto t) { return thrust::get<0>(t) * thrust::get<1>(t); },
+      stream_view_.value());
     RAFT_CHECK_CUDA(stream_view_);
 
     // y = alpha * A * w + beta * v = alpha * A * Dinv * A^T * y + beta * v
@@ -2009,14 +2036,16 @@ void barrier_solver_t<i_t, f_t>::gpu_compute_residuals(const rmm::device_uvector
 
   // Compute bound_residual = E'*u - w - E'*x
   if (data.n_upper_bounds > 0) {
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
         thrust::make_permutation_iterator(data.d_upper_.data(), data.d_upper_bounds_.data()),
         d_w.data(),
-        thrust::make_permutation_iterator(d_x.data(), data.d_upper_bounds_.data())),
+        thrust::make_permutation_iterator(d_x.data(), data.d_upper_bounds_.data()))),
       data.d_bound_residual_.data(),
       data.d_upper_bounds_.size(),
-      [] HD(f_t upper_j, f_t w_k, f_t x_j) { return upper_j - w_k - x_j; },
+      [] HD(thrust::tuple<f_t, f_t, f_t> t) {
+        return thrust::get<0>(t) - thrust::get<1>(t) - thrust::get<2>(t);
+      },
       stream_view_.value());
     RAFT_CHECK_CUDA(stream_view_);
   }
@@ -2029,11 +2058,12 @@ void barrier_solver_t<i_t, f_t>::gpu_compute_residuals(const rmm::device_uvector
   } else {
     raft::copy(data.d_c_.data(), data.c.data(), data.c.size(), stream_view_);
   }
-  cub::DeviceTransform::Transform(cuda::std::make_tuple(data.d_c_.data(), data.d_z_.data()),
-                                  data.d_dual_residual_.data(),
-                                  data.d_dual_residual_.size(),
-                                  cuda::std::minus<>{},
-                                  stream_view_.value());
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_c_.data(), data.d_z_.data())),
+    data.d_dual_residual_.data(),
+    data.d_dual_residual_.size(),
+    [] HD(auto t) { return thrust::get<0>(t) - thrust::get<1>(t); },
+    stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
   // Compute dual_residual = c - A'*y - z + E*v
   auto cusparse_d_y        = data.cusparse_view_.create_vector(d_y);
@@ -2041,30 +2071,33 @@ void barrier_solver_t<i_t, f_t>::gpu_compute_residuals(const rmm::device_uvector
   data.cusparse_view_.transpose_spmv(-1.0, cusparse_d_y, 1.0, descr_dual_residual);
 
   if (data.n_upper_bounds > 0) {
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(thrust::make_permutation_iterator(data.d_dual_residual_.data(),
-                                                              data.d_upper_bounds_.data()),
-                            d_v.data()),
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        thrust::make_permutation_iterator(data.d_dual_residual_.data(),
+                                          data.d_upper_bounds_.data()),
+        d_v.data())),
       thrust::make_permutation_iterator(data.d_dual_residual_.data(), data.d_upper_bounds_.data()),
       data.d_upper_bounds_.size(),
-      [] HD(f_t dual_residual_j, f_t v_k) { return dual_residual_j + v_k; },
+      [] HD(thrust::tuple<f_t, f_t> t) { return thrust::get<0>(t) + thrust::get<1>(t); },
       stream_view_.value());
     RAFT_CHECK_CUDA(stream_view_);
   }
 
   // Compute complementarity_xz_residual = x.*z
-  cub::DeviceTransform::Transform(cuda::std::make_tuple(d_x.data(), d_z.data()),
-                                  data.d_complementarity_xz_residual_.data(),
-                                  data.d_complementarity_xz_residual_.size(),
-                                  cuda::std::multiplies<>{},
-                                  stream_view_.value());
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(d_x.data(), d_z.data())),
+    data.d_complementarity_xz_residual_.data(),
+    data.d_complementarity_xz_residual_.size(),
+    [] HD(auto t) { return thrust::get<0>(t) * thrust::get<1>(t); },
+    stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
   // Compute complementarity_wv_residual = w.*v
-  cub::DeviceTransform::Transform(cuda::std::make_tuple(d_w.data(), d_v.data()),
-                                  data.d_complementarity_wv_residual_.data(),
-                                  data.d_complementarity_wv_residual_.size(),
-                                  cuda::std::multiplies<>{},
-                                  stream_view_.value());
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(d_w.data(), d_v.data())),
+    data.d_complementarity_wv_residual_.data(),
+    data.d_complementarity_wv_residual_.size(),
+    [] HD(auto t) { return thrust::get<0>(t) * thrust::get<1>(t); },
+    stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
   raft::copy(data.complementarity_wv_residual.data(),
              data.d_complementarity_wv_residual_.data(),
@@ -2087,7 +2120,7 @@ void barrier_solver_t<i_t, f_t>::gpu_compute_residuals(const rmm::device_uvector
              data.d_bound_residual_.size(),
              stream_view_);
   // Sync to make sure host data has been copied
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 }
 
 template <typename i_t, typename f_t>
@@ -2242,40 +2275,43 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     raft::common::nvtx::range fun_scope("Barrier: GPU diag, inv diag and sqrt inv diag formation");
 
     // diag = z ./ x
-    cub::DeviceTransform::Transform(cuda::std::make_tuple(data.d_z_.data(), data.d_x_.data()),
-                                    data.d_diag_.data(),
-                                    data.d_diag_.size(),
-                                    cuda::std::divides<>{},
-                                    stream_view_.value());
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(data.d_z_.data(), data.d_x_.data())),
+      data.d_diag_.data(),
+      data.d_diag_.size(),
+      [] HD(auto t) { return thrust::get<0>(t) / thrust::get<1>(t); },
+      stream_view_.value());
     RAFT_CHECK_CUDA(stream_view_);
     // diag = z ./ x + E * (v ./ w) * E'
 
     if (data.n_upper_bounds > 0) {
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(
+      hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(
           data.d_v_.data(),
           data.d_w_.data(),
-          thrust::make_permutation_iterator(data.d_diag_.data(), data.d_upper_bounds_.data())),
+          thrust::make_permutation_iterator(data.d_diag_.data(), data.d_upper_bounds_.data()))),
         thrust::make_permutation_iterator(data.d_diag_.data(), data.d_upper_bounds_.data()),
         data.d_upper_bounds_.size(),
-        [] HD(f_t v_k, f_t w_k, f_t diag_j) { return diag_j + (v_k / w_k); },
+        [] HD(thrust::tuple<f_t, f_t, f_t> t) {
+          return thrust::get<2>(t) + (thrust::get<0>(t) / thrust::get<1>(t));
+        },
         stream_view_.value());
       RAFT_CHECK_CUDA(stream_view_);
     }
 
     // diag = z ./ x + E * (v ./ w) * E' + Q (if Q is diagonal)
     if (data.Q.n > 0 && data.Q_diagonal) {
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(data.d_Q_diag_.data(), data.d_diag_.data()),
+      hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(data.d_Q_diag_.data(), data.d_diag_.data())),
         data.d_diag_.data(),
         data.d_diag_.size(),
-        [] HD(f_t Q_diag_j, f_t diag_j) { return diag_j + Q_diag_j; },
+        [] HD(thrust::tuple<f_t, f_t> t) { return thrust::get<1>(t) + thrust::get<0>(t); },
         stream_view_.value());
       RAFT_CHECK_CUDA(stream_view_);
     }
 
     // inv_diag = 1.0 ./ diag
-    cub::DeviceTransform::Transform(
+    hipcub::DeviceTransform::Transform(
       data.d_diag_.data(),
       data.d_inv_diag.data(),
       data.d_diag_.size(),
@@ -2292,7 +2328,7 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
 
     i_t status;
     if (use_augmented) {
-      RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+      RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
       data.form_augmented();
       status = data.chol->factorize(data.device_augmented);
 
@@ -2325,33 +2361,38 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     raft::common::nvtx::range fun_scope("Barrier: GPU compute H");
     // tmp3 <- E * ((complementarity_wv_rhs .- v .* bound_rhs) ./ w)
     RAFT_CUDA_TRY(
-      cudaMemsetAsync(data.d_tmp3_.data(), 0, sizeof(f_t) * data.d_tmp3_.size(), stream_view_));
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(data.d_bound_rhs_.data(),
-                            data.d_v_.data(),
-                            data.d_complementarity_wv_rhs_.data(),
-                            data.d_w_.data()),
+      hipMemsetAsync(data.d_tmp3_.data(), 0, sizeof(f_t) * data.d_tmp3_.size(), stream_view_));
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        data.d_bound_rhs_.data(),
+        data.d_v_.data(),
+        data.d_complementarity_wv_rhs_.data(),
+        data.d_w_.data())),
       thrust::make_permutation_iterator(data.d_tmp3_.data(), data.d_upper_bounds_.data()),
       data.n_upper_bounds,
-      [] HD(f_t bound_rhs, f_t v, f_t complementarity_wv_rhs, f_t w) {
+      [] HD(thrust::tuple<f_t, f_t, f_t, f_t> t) {
+        f_t bound_rhs = thrust::get<0>(t), v = thrust::get<1>(t);
+        f_t complementarity_wv_rhs = thrust::get<2>(t), w = thrust::get<3>(t);
         return (complementarity_wv_rhs - v * bound_rhs) / w;
       },
       stream_view_.value());
     RAFT_CHECK_CUDA(stream_view_);
     // tmp3 <- tmp3 .+ -(complementarity_xz_rhs ./ x) .+ dual_rhs
     // tmp4 <- inv_diag .* tmp3
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(data.d_inv_diag.data(),
-                            data.d_tmp3_.data(),
-                            data.d_complementarity_xz_rhs_.data(),
-                            data.d_x_.data(),
-                            data.d_dual_rhs_.data()),
-      thrust::make_zip_iterator(data.d_tmp3_.data(), data.d_tmp4_.data()),
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        data.d_inv_diag.data(),
+        data.d_tmp3_.data(),
+        data.d_complementarity_xz_rhs_.data(),
+        data.d_x_.data(),
+        data.d_dual_rhs_.data())),
+      thrust::make_zip_iterator(thrust::make_tuple(data.d_tmp3_.data(), data.d_tmp4_.data())),
       lp.num_cols,
-      [] HD(f_t inv_diag, f_t tmp3, f_t complementarity_xz_rhs, f_t x, f_t dual_rhs)
-        -> thrust::tuple<f_t, f_t> {
+      [] HD(thrust::tuple<f_t, f_t, f_t, f_t, f_t> t) -> thrust::tuple<f_t, f_t> {
+        f_t inv_diag = thrust::get<0>(t), tmp3 = thrust::get<1>(t);
+        f_t complementarity_xz_rhs = thrust::get<2>(t), x = thrust::get<3>(t), dual_rhs = thrust::get<4>(t);
         const f_t tmp = tmp3 + -(complementarity_xz_rhs / x) + dual_rhs;
-        return {tmp, inv_diag * tmp};
+        return thrust::make_tuple(tmp, inv_diag * tmp);
       },
       stream_view_.value());
     RAFT_CHECK_CUDA(stream_view_);
@@ -2398,7 +2439,7 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     raft::copy(data.d_dy_.data(), d_augmented_soln.data() + lp.num_cols, lp.num_rows, stream_view_);
     raft::copy(dx.data(), data.d_dx_.data(), lp.num_cols, stream_view_);
     raft::copy(dy.data(), data.d_dy_.data(), lp.num_rows, stream_view_);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+    RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 
     // TMP should only be init once
     data.cusparse_dy_ = data.cusparse_view_.create_vector(data.d_dy_);
@@ -2460,24 +2501,25 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
       // r1 <- A'*dy - r1
       data.cusparse_view_.transpose_spmv(1.0, data.cusparse_dy_, -1.0, data.cusparse_r1_);
 
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(data.d_inv_diag.data(), data.d_r1_.data(), data.d_diag_.data()),
-        thrust::make_zip_iterator(data.d_dx_.data(), data.d_dx_residual_.data()),
+      hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(data.d_inv_diag.data(), data.d_r1_.data(), data.d_diag_.data())),
+        thrust::make_zip_iterator(thrust::make_tuple(data.d_dx_.data(), data.d_dx_residual_.data())),
         data.d_inv_diag.size(),
-        [] HD(f_t inv_diag, f_t r1, f_t diag) -> thrust::tuple<f_t, f_t> {
+        [] HD(thrust::tuple<f_t, f_t, f_t> t) -> thrust::tuple<f_t, f_t> {
+          f_t inv_diag = thrust::get<0>(t), r1 = thrust::get<1>(t), diag = thrust::get<2>(t);
           const f_t dx = inv_diag * r1;
-          return {dx, dx * diag};
+          return thrust::make_tuple(dx, dx * diag);
         },
         stream_view_.value());
       RAFT_CHECK_CUDA(stream_view_);
       raft::copy(dx.data(), data.d_dx_.data(), data.d_dx_.size(), stream_view_);
 
       data.cusparse_view_.transpose_spmv(-1.0, data.cusparse_dy_, 1.0, data.cusparse_dx_residual_);
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(data.d_dx_residual_.data(), data.d_r1_prime_.data()),
+      hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(data.d_dx_residual_.data(), data.d_r1_prime_.data())),
         data.d_dx_residual_.data(),
         data.d_dx_residual_.size(),
-        [] HD(f_t dx_residual, f_t r1_prime) { return dx_residual + r1_prime; },
+        [] HD(thrust::tuple<f_t, f_t> t) { return thrust::get<0>(t) + thrust::get<1>(t); },
         stream_view_.value());
       RAFT_CHECK_CUDA(stream_view_);
     }
@@ -2519,11 +2561,11 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
       rmm::device_uvector<f_t> d_dx_residual_5(lp.num_cols, stream_view_);
       rmm::device_uvector<f_t> d_dx_residual_6(lp.num_rows, stream_view_);
 
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(data.d_inv_diag.data(), data.d_r1_.data()),
+      hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(data.d_inv_diag.data(), data.d_r1_.data())),
         d_dx_residual_5.data(),
         d_dx_residual_5.size(),
-        [] HD(f_t ind_diag, f_t r1) { return ind_diag * r1; },
+        [] HD(thrust::tuple<f_t, f_t> t) { return thrust::get<0>(t) * thrust::get<1>(t); },
         stream_view_.value());
       RAFT_CHECK_CUDA(stream_view_);
       // TMP should be done just one in the constructor
@@ -2550,11 +2592,11 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
       rmm::device_uvector<f_t> d_dx_residual_3(lp.num_cols, stream_view_);
       rmm::device_uvector<f_t> d_dx_residual_4(lp.num_rows, stream_view_);
 
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(data.d_inv_diag.data(), data.d_r1_prime_.data()),
+      hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(data.d_inv_diag.data(), data.d_r1_prime_.data())),
         d_dx_residual_3.data(),
         d_dx_residual_3.size(),
-        [] HD(f_t ind_diag, f_t r1_prime) { return ind_diag * r1_prime; },
+        [] HD(thrust::tuple<f_t, f_t> t) { return thrust::get<0>(t) * thrust::get<1>(t); },
         stream_view_.value());
       RAFT_CHECK_CUDA(stream_view_);
       // TMP vector creation should only be done once
@@ -2638,14 +2680,17 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     raft::common::nvtx::range fun_scope("Barrier: dz formation GPU");
 
     // dz = (complementarity_xz_rhs - z.* dx) ./ x;
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(data.d_complementarity_xz_rhs_.data(),
-                            data.d_z_.data(),
-                            data.d_dx_.data(),
-                            data.d_x_.data()),
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        data.d_complementarity_xz_rhs_.data(),
+        data.d_z_.data(),
+        data.d_dx_.data(),
+        data.d_x_.data())),
       data.d_dz_.data(),
       data.d_dz_.size(),
-      [] HD(f_t complementarity_xz_rhs, f_t z, f_t dx, f_t x) {
+      [] HD(thrust::tuple<f_t, f_t, f_t, f_t> t) {
+        f_t complementarity_xz_rhs = thrust::get<0>(t), z = thrust::get<1>(t);
+        f_t dx = thrust::get<2>(t), x = thrust::get<3>(t);
         return (complementarity_xz_rhs - z * dx) / x;
       },
       stream_view_.value());
@@ -2657,15 +2702,18 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     raft::common::nvtx::range fun_scope("Barrier: xz_residual GPU");
 
     // xz_residual <- z .* dx + x .* dz - complementarity_xz_rhs
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(data.d_complementarity_xz_rhs_.data(),
-                            data.d_z_.data(),
-                            data.d_dz_.data(),
-                            data.d_dx_.data(),
-                            data.d_x_.data()),
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        data.d_complementarity_xz_rhs_.data(),
+        data.d_z_.data(),
+        data.d_dz_.data(),
+        data.d_dx_.data(),
+        data.d_x_.data())),
       data.d_xz_residual_.data(),
       data.d_xz_residual_.size(),
-      [] HD(f_t complementarity_xz_rhs, f_t z, f_t dz, f_t dx, f_t x) {
+      [] HD(thrust::tuple<f_t, f_t, f_t, f_t, f_t> t) {
+        f_t complementarity_xz_rhs = thrust::get<0>(t), z = thrust::get<1>(t);
+        f_t dz = thrust::get<2>(t), dx = thrust::get<3>(t), x = thrust::get<4>(t);
         return z * dx + x * dz - complementarity_xz_rhs;
       },
       stream_view_.value());
@@ -2680,16 +2728,18 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
   {
     raft::common::nvtx::range fun_scope("Barrier: dv formation GPU");
     // dv <- (v .* E' * dx + complementarity_wv_rhs - v .* bound_rhs) ./ w
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
         data.d_v_.data(),
         thrust::make_permutation_iterator(data.d_dx_.data(), data.d_upper_bounds_.data()),
         data.d_bound_rhs_.data(),
         data.d_complementarity_wv_rhs_.data(),
-        data.d_w_.data()),
+        data.d_w_.data())),
       data.d_dv_.data(),
       data.d_dv_.size(),
-      [] HD(f_t v, f_t gathered_dx, f_t bound_rhs, f_t complementarity_wv_rhs, f_t w) {
+      [] HD(thrust::tuple<f_t, f_t, f_t, f_t, f_t> t) {
+        f_t v = thrust::get<0>(t), gathered_dx = thrust::get<1>(t), bound_rhs = thrust::get<2>(t);
+        f_t complementarity_wv_rhs = thrust::get<3>(t), w = thrust::get<4>(t);
         return (v * gathered_dx - bound_rhs * v + complementarity_wv_rhs) / w;
       },
       stream_view_.value());
@@ -2703,17 +2753,19 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     // TMP data should already be on the GPU (not fixed for now since debug only)
     rmm::device_uvector<f_t> d_dv_residual(data.n_upper_bounds, stream_view_);
     // dv_residual <- -v .* E' * dx + w .* dv - complementarity_wv_rhs + v .* bound_rhs
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
         data.d_v_.data(),
         thrust::make_permutation_iterator(data.d_dx_.data(), data.d_upper_bounds_.data()),
         data.d_dv_.data(),
         data.d_bound_rhs_.data(),
         data.d_complementarity_wv_rhs_.data(),
-        data.d_w_.data()),
+        data.d_w_.data())),
       d_dv_residual.data(),
       d_dv_residual.size(),
-      [] HD(f_t v, f_t gathered_dx, f_t dv, f_t bound_rhs, f_t complementarity_wv_rhs, f_t w) {
+      [] HD(thrust::tuple<f_t, f_t, f_t, f_t, f_t, f_t> t) {
+        f_t v = thrust::get<0>(t), gathered_dx = thrust::get<1>(t), dv = thrust::get<2>(t);
+        f_t bound_rhs = thrust::get<3>(t), complementarity_wv_rhs = thrust::get<4>(t), w = thrust::get<5>(t);
         return -v * gathered_dx + w * dv - complementarity_wv_rhs + v * bound_rhs;
       },
       stream_view_.value());
@@ -2747,12 +2799,14 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     data.cusparse_view_.transpose_spmv(1.0, data.cusparse_dy_, -1.0, data.cusparse_dual_residual_);
 
     // dual_residual <- A' * dy - E * dv + dz - dual_rhs
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(
-        data.d_dual_residual_.data(), data.d_dz_.data(), data.d_dual_rhs_.data()),
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        data.d_dual_residual_.data(), data.d_dz_.data(), data.d_dual_rhs_.data())),
       data.d_dual_residual_.data(),
       data.d_dual_residual_.size(),
-      [] HD(f_t dual_residual, f_t dz, f_t dual_rhs) { return dual_residual + dz - dual_rhs; },
+      [] HD(thrust::tuple<f_t, f_t, f_t> t) {
+        return thrust::get<0>(t) + thrust::get<1>(t) - thrust::get<2>(t);
+      },
       stream_view_.value());
     RAFT_CHECK_CUDA(stream_view_);
     const f_t dual_residual_norm =
@@ -2767,13 +2821,13 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     raft::common::nvtx::range fun_scope("Barrier: dw formation GPU");
 
     // dw = bound_rhs - E'*dx
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
         data.d_dw_.data(),
-        thrust::make_permutation_iterator(data.d_dx_.data(), data.d_upper_bounds_.data())),
+        thrust::make_permutation_iterator(data.d_dx_.data(), data.d_upper_bounds_.data()))),
       data.d_dw_.data(),
       data.d_dw_.size(),
-      [] HD(f_t dw, f_t gathered_dx) { return dw - gathered_dx; },
+      [] HD(thrust::tuple<f_t, f_t> t) { return thrust::get<0>(t) - thrust::get<1>(t); },
       stream_view_.value());
     RAFT_CHECK_CUDA(stream_view_);
     raft::copy(dw.data(), data.d_dw_.data(), data.d_dw_.size(), stream_view_);
@@ -2781,14 +2835,16 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     if (debug) {
       // dw_residual <- dw + E'*dx - bound_rhs
 
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(
+      hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(
           data.d_dw_.data(),
           thrust::make_permutation_iterator(data.d_dx_.data(), data.d_upper_bounds_.data()),
-          data.d_bound_rhs_.data()),
+          data.d_bound_rhs_.data())),
         data.d_dw_residual_.data(),
         data.d_dw_residual_.size(),
-        [] HD(f_t dw, f_t gathered_dx, f_t bound_rhs) { return dw + gathered_dx - bound_rhs; },
+        [] HD(thrust::tuple<f_t, f_t, f_t> t) {
+          return thrust::get<0>(t) + thrust::get<1>(t) - thrust::get<2>(t);
+        },
         stream_view_.value());
       RAFT_CHECK_CUDA(stream_view_);
       const f_t dw_residual_norm =
@@ -2804,15 +2860,18 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
     raft::common::nvtx::range fun_scope("Barrier: wv_residual GPU");
 
     // wv_residual <- v .* dw + w .* dv - complementarity_wv_rhs
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(data.d_complementarity_wv_rhs_.data(),
-                            data.d_w_.data(),
-                            data.d_v_.data(),
-                            data.d_dw_.data(),
-                            data.d_dv_.data()),
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        data.d_complementarity_wv_rhs_.data(),
+        data.d_w_.data(),
+        data.d_v_.data(),
+        data.d_dw_.data(),
+        data.d_dv_.data())),
       data.d_wv_residual_.data(),
       data.d_wv_residual_.size(),
-      [] HD(f_t complementarity_wv_rhs, f_t w, f_t v, f_t dw, f_t dv) {
+      [] HD(thrust::tuple<f_t, f_t, f_t, f_t, f_t> t) {
+        f_t complementarity_wv_rhs = thrust::get<0>(t), w = thrust::get<1>(t), v = thrust::get<2>(t);
+        f_t dw = thrust::get<3>(t), dv = thrust::get<4>(t);
         return v * dw + w * dv - complementarity_wv_rhs;
       },
       stream_view_.value());
@@ -2847,7 +2906,7 @@ void barrier_solver_t<i_t, f_t>::compute_affine_rhs(iteration_data_t<i_t, f_t>& 
              stream_view_);
 
   // x.*z ->  -x .* z
-  cub::DeviceTransform::Transform(
+  hipcub::DeviceTransform::Transform(
     data.d_complementarity_xz_rhs_.data(),
     data.d_complementarity_xz_rhs_.data(),
     data.d_complementarity_xz_rhs_.size(),
@@ -2855,7 +2914,7 @@ void barrier_solver_t<i_t, f_t>::compute_affine_rhs(iteration_data_t<i_t, f_t>& 
     stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
   // w.*v -> -w .* v
-  cub::DeviceTransform::Transform(
+  hipcub::DeviceTransform::Transform(
     data.d_complementarity_wv_rhs_.data(),
     data.d_complementarity_wv_rhs_.data(),
     data.d_complementarity_wv_rhs_.size(),
@@ -2950,18 +3009,22 @@ void barrier_solver_t<i_t, f_t>::compute_cc_rhs(iteration_data_t<i_t, f_t>& data
 {
   raft::common::nvtx::range fun_scope("Barrier: compute_cc_rhs");
 
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(data.d_dx_aff_.data(), data.d_dz_aff_.data()),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_dx_aff_.data(), data.d_dz_aff_.data())),
     data.d_complementarity_xz_rhs_.data(),
     data.d_complementarity_xz_rhs_.size(),
-    [new_mu] HD(f_t dx_aff, f_t dz_aff) { return -(dx_aff * dz_aff) + new_mu; },
+    [new_mu] HD(thrust::tuple<f_t, f_t> t) {
+      return -(thrust::get<0>(t) * thrust::get<1>(t)) + new_mu;
+    },
     stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(data.d_dw_aff_.data(), data.d_dv_aff_.data()),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_dw_aff_.data(), data.d_dv_aff_.data())),
     data.d_complementarity_wv_rhs_.data(),
     data.d_complementarity_wv_rhs_.size(),
-    [new_mu] HD(f_t dw_aff, f_t dv_aff) { return -(dw_aff * dv_aff) + new_mu; },
+    [new_mu] HD(thrust::tuple<f_t, f_t> t) {
+      return -(thrust::get<0>(t) * thrust::get<1>(t)) + new_mu;
+    },
     stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
 
@@ -3005,31 +3068,35 @@ void barrier_solver_t<i_t, f_t>::compute_final_direction(iteration_data_t<i_t, f
   assert(data.d_dx_aff_.size() == data.d_dz_aff_.size());
   assert(data.d_dy_aff_.size() == data.d_dy_.size());
 
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(
-      data.d_dw_aff_.data(), data.d_dv_aff_.data(), data.d_dw_.data(), data.d_dv_.data()),
-    thrust::make_zip_iterator(data.d_dw_.data(), data.d_dv_.data()),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(
+      data.d_dw_aff_.data(), data.d_dv_aff_.data(), data.d_dw_.data(), data.d_dv_.data())),
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_dw_.data(), data.d_dv_.data())),
     data.d_dw_.size(),
-    [] HD(f_t dw_aff, f_t dv_aff, f_t dw, f_t dv) -> thrust::tuple<f_t, f_t> {
-      return {dw + dw_aff, dv + dv_aff};
+    [] HD(thrust::tuple<f_t, f_t, f_t, f_t> t) -> thrust::tuple<f_t, f_t> {
+      f_t dw_aff = thrust::get<0>(t), dv_aff = thrust::get<1>(t);
+      f_t dw = thrust::get<2>(t), dv = thrust::get<3>(t);
+      return thrust::make_tuple(dw + dw_aff, dv + dv_aff);
     },
     stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(
-      data.d_dx_aff_.data(), data.d_dz_aff_.data(), data.d_dx_.data(), data.d_dz_.data()),
-    thrust::make_zip_iterator(data.d_dx_.data(), data.d_dz_.data()),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(
+      data.d_dx_aff_.data(), data.d_dz_aff_.data(), data.d_dx_.data(), data.d_dz_.data())),
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_dx_.data(), data.d_dz_.data())),
     data.d_dx_.size(),
-    [] HD(f_t dx_aff, f_t dz_aff, f_t dx, f_t dz) -> thrust::tuple<f_t, f_t> {
-      return {dx + dx_aff, dz + dz_aff};
+    [] HD(thrust::tuple<f_t, f_t, f_t, f_t> t) -> thrust::tuple<f_t, f_t> {
+      f_t dx_aff = thrust::get<0>(t), dz_aff = thrust::get<1>(t);
+      f_t dx = thrust::get<2>(t), dz = thrust::get<3>(t);
+      return thrust::make_tuple(dx + dx_aff, dz + dz_aff);
     },
     stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(data.d_dy_aff_.data(), data.d_dy_.data()),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_dy_aff_.data(), data.d_dy_.data())),
     data.d_dy_.data(),
     data.d_dy_.size(),
-    [] HD(f_t dy_aff, f_t dy) { return dy + dy_aff; },
+    [] HD(thrust::tuple<f_t, f_t> t) { return thrust::get<1>(t) + thrust::get<0>(t); },
     stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
 }
@@ -3062,29 +3129,33 @@ void barrier_solver_t<i_t, f_t>::compute_next_iterate(iteration_data_t<i_t, f_t>
 {
   raft::common::nvtx::range fun_scope("Barrier: compute_next_iterate");
 
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(data.d_w_.data(), data.d_v_.data(), data.d_dw_.data(), data.d_dv_.data()),
-    thrust::make_zip_iterator(data.d_w_.data(), data.d_v_.data()),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_w_.data(), data.d_v_.data(), data.d_dw_.data(), data.d_dv_.data())),
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_w_.data(), data.d_v_.data())),
     data.d_dw_.size(),
-    [step_primal, step_dual] HD(f_t w, f_t v, f_t dw, f_t dv) -> thrust::tuple<f_t, f_t> {
-      return {w + step_primal * dw, v + step_dual * dv};
+    [step_primal, step_dual] HD(thrust::tuple<f_t, f_t, f_t, f_t> t) -> thrust::tuple<f_t, f_t> {
+      f_t w = thrust::get<0>(t), v = thrust::get<1>(t), dw = thrust::get<2>(t), dv = thrust::get<3>(t);
+      return thrust::make_tuple(w + step_primal * dw, v + step_dual * dv);
     },
     stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(data.d_x_.data(), data.d_z_.data(), data.d_dx_.data(), data.d_dz_.data()),
-    thrust::make_zip_iterator(data.d_x_.data(), data.d_z_.data()),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_x_.data(), data.d_z_.data(), data.d_dx_.data(), data.d_dz_.data())),
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_x_.data(), data.d_z_.data())),
     data.d_dx_.size(),
-    [step_primal, step_dual] HD(f_t x, f_t z, f_t dx, f_t dz) -> thrust::tuple<f_t, f_t> {
-      return {x + step_primal * dx, z + step_dual * dz};
+    [step_primal, step_dual] HD(thrust::tuple<f_t, f_t, f_t, f_t> t) -> thrust::tuple<f_t, f_t> {
+      f_t x = thrust::get<0>(t), z = thrust::get<1>(t), dx = thrust::get<2>(t), dz = thrust::get<3>(t);
+      return thrust::make_tuple(x + step_primal * dx, z + step_dual * dz);
     },
     stream_view_.value());
   RAFT_CHECK_CUDA(stream_view_);
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(data.d_y_.data(), data.d_dy_.data()),
+  hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(data.d_y_.data(), data.d_dy_.data())),
     data.d_y_.data(),
     data.d_y_.size(),
-    [step_dual] HD(f_t y, f_t dy) { return y + step_dual * dy; },
+    [step_dual] HD(thrust::tuple<f_t, f_t> t) {
+      return thrust::get<0>(t) + step_dual * thrust::get<1>(t);
+    },
     stream_view_);
   RAFT_CHECK_CUDA(stream_view_);
   // Do not handle free variables for quadratic problems
@@ -3116,7 +3187,7 @@ void barrier_solver_t<i_t, f_t>::compute_next_iterate(iteration_data_t<i_t, f_t>
   raft::copy(data.v.data(), data.d_v_.data(), data.d_v_.size(), stream_view_);
   raft::copy(data.z.data(), data.d_z_.data(), data.d_z_.size(), stream_view_);
   // Sync to make sure all host variable are done copying
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 }
 
 template <typename i_t, typename f_t>
@@ -3571,7 +3642,7 @@ lp_status_t barrier_solver_t<i_t, f_t>::solve(f_t start_time,
         return lp_status_t::CONCURRENT_LIMIT;
       }
       // Sync to make sure all the async copies to host done inside are finished
-      RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+      RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 
       if (status < 0) {
         return check_for_suboptimal_solution(options,
@@ -3610,7 +3681,7 @@ lp_status_t barrier_solver_t<i_t, f_t>::solve(f_t start_time,
         return lp_status_t::CONCURRENT_LIMIT;
       }
       // Sync to make sure all the async copies to host done inside are finished
-      RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+      RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
       if (status < 0) {
         return check_for_suboptimal_solution(options,
                                              data,
@@ -3792,7 +3863,9 @@ lp_status_t barrier_solver_t<i_t, f_t>::solve(f_t start_time,
 #ifdef DUAL_SIMPLEX_INSTANTIATE_DOUBLE
 template class barrier_solver_t<int, double>;
 template class sparse_cholesky_base_t<int, double>;
+#if USE_CUDSS
 template class sparse_cholesky_cudss_t<int, double>;
+#endif
 template class iteration_data_t<int, double>;
 template class barrier_solver_settings_t<int, double>;
 #endif

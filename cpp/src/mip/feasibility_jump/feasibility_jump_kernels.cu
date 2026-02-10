@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -14,7 +15,7 @@
 
 #include <raft/random/rng.cuh>
 
-#include <cooperative_groups.h>
+#include <hip/hip_cooperative_groups.h>
 
 #include "feasibility_jump_impl_common.cuh"
 
@@ -164,7 +165,7 @@ template <typename i_t, typename f_t, i_t TPB, bool IgnoreCstrWeights = false>
 DI typename fj_t<i_t, f_t>::move_score_info_t compute_new_score(
   const typename fj_t<i_t, f_t>::climber_data_t::view_t& fj, i_t var_idx, f_t delta)
 {
-  typedef cub::BlockReduce<f_t, TPB> BlockReduce;
+  typedef hipcub::BlockReduce<f_t, TPB> BlockReduce;
   __shared__ typename BlockReduce::TempStorage temp_storage;
   __shared__ typename BlockReduce::TempStorage temp_storage_2;
 
@@ -702,7 +703,7 @@ DI void update_lift_moves(typename fj_t<i_t, f_t>::climber_data_t::view_t fj)
   cuopt_assert(fj.violated_constraints.size() == 0, "");
 
   cuopt_assert(TPB == blockDim.x, "Invalid TPB");
-  typedef cub::BlockReduce<f_t, TPB> BlockReduce;
+  typedef hipcub::BlockReduce<f_t, TPB> BlockReduce;
   __shared__ union {
     typename BlockReduce::TempStorage cub;
     f_t raft[2 * raft::WarpSize];
@@ -760,11 +761,19 @@ DI void update_lift_moves(typename fj_t<i_t, f_t>::climber_data_t::view_t fj)
       if (th_lower_delta >= th_upper_delta) break;
     }
 
-    // cub::BlockReduce because raft::blockReduce has a bug when using min() w/ floats
+    // hipcub::BlockReduce because raft::blockReduce has a bug when using min() w/ floats
     // lfd = lift feasible domain
+#ifdef __HIP_PLATFORM_AMD__
+    f_t lfd_lb = BlockReduce(shmem.cub).Reduce(th_lower_delta, cuopt::maximum_functor());
+#else
     f_t lfd_lb = BlockReduce(shmem.cub).Reduce(th_lower_delta, cuda::maximum());
+#endif
     __syncthreads();
+#ifdef __HIP_PLATFORM_AMD__
+    f_t lfd_ub = BlockReduce(shmem.cub).Reduce(th_upper_delta, cuopt::minimum_functor());
+#else
     f_t lfd_ub = BlockReduce(shmem.cub).Reduce(th_upper_delta, cuda::minimum());
+#endif
 
     // invalid crossing bounds
     if (lfd_lb >= lfd_ub) { lfd_lb = lfd_ub = 0; }
@@ -1036,7 +1045,12 @@ __global__ void select_variable_kernel(typename fj_t<i_t, f_t>::climber_data_t::
     fj.settings->seed, *fj.iterations * fj.settings->parameters.max_sampled_moves, 0);
 
   using move_score_t = typename fj_t<i_t, f_t>::move_score_t;
+#ifdef __HIP_PLATFORM_AMD__
+  // HIP requires alignas before __shared__
+  alignas(move_score_t) __shared__ char shmem_storage[2 * raft::WarpSize * sizeof(move_score_t)];
+#else
   __shared__ alignas(move_score_t) char shmem_storage[2 * raft::WarpSize * sizeof(move_score_t)];
+#endif
   auto* const shmem = (move_score_t*)shmem_storage;
 
   auto th_best_score  = fj_t<i_t, f_t>::move_score_t::invalid();
@@ -1201,7 +1215,12 @@ DI thrust::tuple<i_t, f_t, typename fj_t<i_t, f_t>::move_score_t> gridwide_reduc
 
   if (blockIdx.x == 0) {
     using move_score_t = typename fj_t<i_t, f_t>::move_score_t;
+#ifdef __HIP_PLATFORM_AMD__
+    // HIP requires alignas before __shared__
+    alignas(move_score_t) __shared__ char shmem_storage[2 * raft::WarpSize * sizeof(move_score_t)];
+#else
     __shared__ alignas(move_score_t) char shmem_storage[2 * raft::WarpSize * sizeof(move_score_t)];
+#endif
     auto* const shmem = (move_score_t*)shmem_storage;
 
     auto th_best_score = fj_t<i_t, f_t>::move_score_t::invalid();
@@ -1279,8 +1298,15 @@ best_breakthrough_move_at_local_min(typename fj_t<i_t, f_t>::climber_data_t::vie
 template <typename i_t, typename f_t>
 __global__ void handle_local_minimum_kernel(typename fj_t<i_t, f_t>::climber_data_t::view_t fj)
 {
+  using move_score_t = typename fj_t<i_t, f_t>::move_score_t;
   raft::random::PCGenerator rng(fj.settings->seed + *fj.iterations, 0, 0);
-  __shared__ typename fj_t<i_t, f_t>::move_score_t shmem[2 * raft::WarpSize];
+#ifdef __HIP_PLATFORM_AMD__
+  // HIP doesn't support initialization for __shared__ variables with non-trivial types
+  alignas(move_score_t) __shared__ char shmem_storage[2 * raft::WarpSize * sizeof(move_score_t)];
+  [[maybe_unused]] auto* const shmem = reinterpret_cast<move_score_t*>(shmem_storage);
+#else
+  __shared__ move_score_t shmem[2 * raft::WarpSize];
+#endif
   if (*fj.break_condition) return;
 
   // did we reach a local minimum?

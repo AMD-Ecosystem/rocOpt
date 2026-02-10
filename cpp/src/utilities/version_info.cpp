@@ -6,7 +6,11 @@
 /* clang-format on */
 #include "version_info.hpp"
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#else
 #include <cuda_runtime.h>
+#endif
 
 #include <cuopt/version_config.hpp>
 #include <utilities/build_info.hpp>
@@ -75,10 +79,13 @@ static std::string get_cpu_model_from_proc()
 }
 
 // From https://gcc.gnu.org/onlinedocs/gcc/x86-Built-in-Functions.html
-// Also supported by clang
+// Also supported by clang (but NOT when compiling with HIP/amdclang++)
 static std::string get_cpu_model_builtin()
 {
-#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+// __builtin_cpu_init/is are not supported by amdclang++ even for host code
+// Use /proc/cpuinfo fallback instead when compiling with HIP
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(__HIPCC__) && !defined(__HIP_PLATFORM_AMD__) && !defined(__CUDA_ARCH__)
   __builtin_cpu_init();
   return __builtin_cpu_is("amd")               ? "AMD CPU"
          : __builtin_cpu_is("intel")           ? "Intel CPU"
@@ -166,10 +173,17 @@ static double get_available_memory_gb()
 void print_version_info()
 {
   int device_id = 0;
+#ifdef __HIP_PLATFORM_AMD__
+  hipGetDevice(&device_id);
+  hipDeviceProp_t device_prop;
+  hipGetDeviceProperties(&device_prop, device_id);
+  hipUUID uuid   = device_prop.uuid;
+#else
   cudaGetDevice(&device_id);
   cudaDeviceProp device_prop;
   cudaGetDeviceProperties(&device_prop, device_id);
   cudaUUID_t uuid   = device_prop.uuid;
+#endif
   char uuid_str[37] = {0};
   snprintf(uuid_str,
            sizeof(uuid_str),
@@ -191,7 +205,11 @@ void print_version_info()
            uuid.bytes[14],
            uuid.bytes[15]);
   int version = 0;
+#ifdef __HIP_PLATFORM_AMD__
+  hipRuntimeGetVersion(&version);
+#else
   cudaRuntimeGetVersion(&version);
+#endif
   int major = version / 1000;
   int minor = (version % 1000) / 10;
   CUOPT_LOG_INFO("cuOpt version: %d.%d.%d, git hash: %s, host arch: %s, device archs: %s",
@@ -200,19 +218,31 @@ void print_version_info()
                  CUOPT_VERSION_PATCH,
                  CUOPT_GIT_COMMIT_HASH,
                  CUOPT_CPU_ARCHITECTURE,
+#ifdef __HIP_PLATFORM_AMD__
+                 CUOPT_HIP_ARCHITECTURES);
+#else
                  CUOPT_CUDA_ARCHITECTURES);
+#endif
   CUOPT_LOG_INFO("CPU: %s, threads (physical/logical): %d/%d, RAM: %.2f GiB",
                  get_cpu_model().c_str(),
                  get_physical_cores(),
                  std::thread::hardware_concurrency(),
                  get_available_memory_gb());
+#ifdef __HIP_PLATFORM_AMD__
+  CUOPT_LOG_INFO("HIP/ROCm %d.%d, device: %s (ID %d), VRAM: %.2f GiB",
+#else
   CUOPT_LOG_INFO("CUDA %d.%d, device: %s (ID %d), VRAM: %.2f GiB",
+#endif
                  major,
                  minor,
                  device_prop.name,
                  device_id,
                  (double)device_prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0));
+#ifdef __HIP_PLATFORM_AMD__
+  CUOPT_LOG_INFO("HIP device UUID: %s\n", uuid_str);
+#else
   CUOPT_LOG_INFO("CUDA device UUID: %s\n", uuid_str);
+#endif
 }
 
 }  // namespace cuopt

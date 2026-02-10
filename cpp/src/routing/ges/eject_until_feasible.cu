@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -18,10 +19,18 @@ namespace routing {
 namespace detail {
 
 template <typename T, typename i_t = int, typename f_t = float>
+#ifdef __HIP_PLATFORM_AMD__
+// HIP requires 64-bit mask for 64-wide wavefronts
+__device__ inline T shfl_sync(T val,
+                              i_t srcLane,
+                              i_t width = raft::WarpSize,
+                              uint64_t mask = 0xffffffffffffffffull)
+#else
 __device__ inline T shfl_sync(T val,
                               i_t srcLane,
                               i_t width = raft::WarpSize,
                               uint mask = 0xffffffffu)
+#endif
 {
   return __shfl_sync(mask, val, srcLane, width);
 }

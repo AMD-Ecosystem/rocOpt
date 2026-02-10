@@ -28,7 +28,6 @@
 #include <thrust/tuple.h>
 #include <thrust/uninitialized_fill.h>
 #include <cuda/std/functional>
-
 #include <unordered_set>
 
 namespace cuopt::linear_programming::detail {
@@ -178,7 +177,7 @@ void update_from_csr(problem_t<i_t, f_t>& pb, bool remap_cache_ids)
                                               pb.presolve_data.variable_mapping.begin(),
                                               pb.presolve_data.variable_mapping.end(),
                                               var_map.begin(),
-                                              cuda::std::identity{});
+                                              identity_functor{});
     pb.presolve_data.variable_mapping.resize(used_iter - pb.presolve_data.variable_mapping.begin(),
                                              handle_ptr->get_stream());
     if (remap_cache_ids) {

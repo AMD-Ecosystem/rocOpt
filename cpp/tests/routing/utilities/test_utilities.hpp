@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -6,6 +7,10 @@
 /* clang-format on */
 
 #pragma once
+
+// Include <cstring> before rocprim headers to fix memset() resolution issue
+// rocprim's texture_cache_iterator.hpp calls memset() from host code
+#include <cstring>
 
 #include <utilities/common_utils.hpp>
 

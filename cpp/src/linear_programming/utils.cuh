@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -53,7 +54,7 @@ DI f_t deterministic_block_reduce(raft::device_span<f_t> shared, f_t val)
 
 template <typename f_t>
 struct max_abs_value {
-  __device__ __forceinline__ f_t operator()(f_t a, f_t b)
+  __device__ __forceinline__ f_t operator()(f_t a, f_t b) const
   {
     return raft::abs(a) < raft::abs(b) ? raft::abs(b) : raft::abs(a);
   }
@@ -105,6 +106,16 @@ struct primal_projection {
     return thrust::make_tuple(next, next - primal, next - primal + next);
   }
 
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm version: accepts tuple (for rocprim compatibility)
+  __device__ __forceinline__ thrust::tuple<f_t, f_t, f_t> operator()(
+    const thrust::tuple<f_t, f_t, f_t, f_t2>& input)
+  {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input),
+                      thrust::get<2>(input), thrust::get<3>(input));
+  }
+#endif
+
   const f_t* step_size_;
   const f_t* scalar_;
 };
@@ -112,6 +123,7 @@ struct primal_projection {
 template <typename f_t>
 struct dual_projection {
   dual_projection(const f_t* scalar) : scalar_{scalar} {}
+  
   __device__ __forceinline__ thrust::tuple<f_t, f_t> operator()(f_t dual,
                                                                 f_t gradient,
                                                                 f_t lower,
@@ -123,13 +135,37 @@ struct dual_projection {
     next     = raft::max<f_t>(low, raft::min<f_t>(up, f_t(0)));
     return thrust::make_tuple(next, next - dual);
   }
+  
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm version: accepts tuple (for rocprim compatibility)
+  __device__ __forceinline__ thrust::tuple<f_t, f_t> operator()(
+    const thrust::tuple<f_t, f_t, f_t, f_t>& input)
+  {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input),
+                      thrust::get<2>(input), thrust::get<3>(input));
+  }
+#endif
+  
   const f_t* scalar_;
 };
 
 template <typename f_t>
 struct a_add_scalar_times_b {
   a_add_scalar_times_b(const f_t* scalar) : scalar_{scalar} {}
-  __device__ __forceinline__ f_t operator()(f_t a, f_t b) { return a + *scalar_ * b; }
+  __device__ __forceinline__ f_t operator()(f_t a, f_t b) const { return a + *scalar_ * b; }
+
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm: Accept tuple - explicitly specify thrust::tuple
+  template <typename T1, typename T2>
+  __device__ __forceinline__ f_t operator()(const thrust::tuple<T1, T2>& input) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+  // ROCm: Accept tuple + index
+  template <typename T1, typename T2, typename IndexType>
+  __device__ __forceinline__ f_t operator()(const thrust::tuple<T1, T2>& input, IndexType idx) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+#endif
 
   const f_t* scalar_;
 };
@@ -153,10 +189,23 @@ struct constraint_clamp {
 
 template <typename f_t, typename f_t2>
 struct clamp {
-  __device__ f_t operator()(f_t value, f_t2 bounds)
+  __device__ f_t operator()(f_t value, f_t2 bounds) const
   {
     return raft::min<f_t>(raft::max<f_t>(value, get_lower(bounds)), get_upper(bounds));
   }
+
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm: Accept tuple - explicitly specify thrust::tuple
+  template <typename T1, typename T2>
+  __device__ __forceinline__ f_t operator()(const thrust::tuple<T1, T2>& input) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+  // ROCm: Accept tuple + index
+  template <typename T1, typename T2, typename IndexType>
+  __device__ __forceinline__ f_t operator()(const thrust::tuple<T1, T2>& input, IndexType idx) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+#endif
 };
 
 template <typename f_t>
@@ -201,7 +250,7 @@ void inline compute_sum_bounds(const rmm::device_uvector<f_t>& constraint_lower_
     if (isfinite(upper)) sum += upper * upper;
     return sum;
   };
-  cub::DeviceReduce::TransformReduce(
+  RAFT_CUDA_TRY(hipcub::DeviceReduce::TransformReduce(
     nullptr,
     bytes,
     thrust::make_zip_iterator(constraint_lower_bounds.data(), constraint_upper_bounds.data()),
@@ -210,11 +259,11 @@ void inline compute_sum_bounds(const rmm::device_uvector<f_t>& constraint_lower_
     cuda::std::plus<>{},
     main_op,
     f_t(0),
-    stream_view);
+    stream_view));
 
   d_temp_storage.resize(bytes, stream_view);
 
-  cub::DeviceReduce::TransformReduce(
+  RAFT_CUDA_TRY(hipcub::DeviceReduce::TransformReduce(
     d_temp_storage.data(),
     bytes,
     thrust::make_zip_iterator(constraint_lower_bounds.data(), constraint_upper_bounds.data()),
@@ -223,13 +272,13 @@ void inline compute_sum_bounds(const rmm::device_uvector<f_t>& constraint_lower_
     cuda::std::plus<>{},
     main_op,
     f_t(0),
-    stream_view);
+    stream_view));
 
   const f_t res = std::sqrt(out.value(stream_view));
   out.set_value_async(res, stream_view);
 
   // Sync since we are using local variable
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view));
 }
 
 template <typename f_t>
@@ -265,7 +314,7 @@ struct max_violation {
 
 template <typename f_t, typename f_t2>
 struct divide_check_zero {
-  __device__ f_t2 operator()(f_t2 bounds, f_t value)
+  __device__ f_t2 operator()(f_t2 bounds, f_t value) const
   {
     if (value == f_t{0}) {
       return f_t2{0, 0};
@@ -273,17 +322,42 @@ struct divide_check_zero {
       return f_t2{get_lower(bounds) / value, get_upper(bounds) / value};
     }
   }
+
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm version: accepts tuple (for rocprim compatibility)
+  template <typename T1, typename T2>
+  __device__ __forceinline__ f_t2 operator()(const thrust::tuple<T1, T2>& input) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+  template <typename T1, typename T2, typename IdxT>
+  __device__ __forceinline__ f_t2 operator()(const thrust::tuple<T1, T2>& input, IdxT idx) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+#endif
 };
 
 template <typename f_t, typename f_t2>
 struct bound_value_gradient {
-  __device__ f_t operator()(f_t value, f_t2 bounds)
+  __device__ f_t operator()(f_t value, f_t2 bounds) const
   {
     f_t lower = get_lower(bounds);
     f_t upper = get_upper(bounds);
     if (value > f_t(0) && value < f_t(0)) { return 0; }
     return value > f_t(0) ? lower : upper;
   }
+
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm: Accept tuple - explicitly specify thrust::tuple
+  template <typename T1, typename T2>
+  __device__ __forceinline__ f_t operator()(const thrust::tuple<T1, T2>& input) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+  // ROCm: Accept tuple + index
+  template <typename T1, typename T2, typename IndexType>
+  __device__ __forceinline__ f_t operator()(const thrust::tuple<T1, T2>& input, IndexType idx) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+#endif
 };
 
 template <typename f_t>
@@ -305,7 +379,7 @@ struct constraint_bound_value_reduced_cost_product {
 
 template <typename f_t, typename f_t2>
 struct bound_value_reduced_cost_product {
-  __device__ f_t operator()(f_t value, f_t2 variable_bounds)
+  __device__ f_t operator()(f_t value, f_t2 variable_bounds) const
   {
     f_t lower       = get_lower(variable_bounds);
     f_t upper       = get_upper(variable_bounds);
@@ -320,6 +394,19 @@ struct bound_value_reduced_cost_product {
     f_t val = isfinite(bound_value) ? value * bound_value : f_t(0);
     return val;
   }
+
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm: Accept tuple - explicitly specify thrust::tuple
+  template <typename T1, typename T2>
+  __device__ __forceinline__ f_t operator()(const thrust::tuple<T1, T2>& input) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+  // ROCm: Accept tuple + index
+  template <typename T1, typename T2, typename IndexType>
+  __device__ __forceinline__ f_t operator()(const thrust::tuple<T1, T2>& input, IndexType idx) const {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input));
+  }
+#endif
 };
 
 template <typename f_t>
@@ -448,7 +535,7 @@ template <typename f_t>
 f_t device_to_host_value(f_t* iter)
 {
   f_t host_value;
-  cudaMemcpy(&host_value, iter, sizeof(f_t), cudaMemcpyDeviceToHost);
+  hipMemcpy(&host_value, iter, sizeof(f_t), hipMemcpyDeviceToHost);
   return host_value;
 }
 
@@ -472,6 +559,31 @@ void inline my_l2_weighted_norm(const rmm::device_uvector<f_t>& input_vector,
                                 rmm::device_scalar<f_t>& result,
                                 rmm::cuda_stream_view stream)
 {
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm/hipRAFT: Use simpler approach with manual reduction
+  // The new hipRAFT API is significantly different, so use a workaround
+  auto squared_weighted_sum = [] __host__ __device__(f_t a, f_t b, f_t weight) {
+    return a + b * b * weight;
+  };
+  
+  // Compute sum of squared weighted values
+  rmm::device_scalar<f_t> sum_squared(0.0, stream);
+  
+  // Use thrust::transform_reduce for the weighted norm calculation
+  auto squared_op = [weight] __device__(f_t x) { return x * x * weight; };
+  f_t h_sum = thrust::transform_reduce(
+    rmm::exec_policy(stream),
+    input_vector.begin(),
+    input_vector.end(),
+    squared_op,
+    f_t(0.0),
+    thrust::plus<f_t>());
+  
+  // Take square root
+  f_t h_result = raft::sqrt(h_sum);
+  result.set_value_async(h_result, stream);
+#else
+  // CUDA: Use original RAFT reduce API
   auto fin_op  = [] __device__(f_t in) { return raft::sqrt(in); };
   auto main_op = [weight] __device__(f_t in, i_t _) { return in * in * weight; };
   raft::linalg::reduce<true, true, f_t, f_t, i_t>(result.data(),
@@ -484,6 +596,7 @@ void inline my_l2_weighted_norm(const rmm::device_uvector<f_t>& input_vector,
                                                   main_op,
                                                   raft::Sum<f_t>(),
                                                   fin_op);
+#endif
 }
 
 template <typename f_t>

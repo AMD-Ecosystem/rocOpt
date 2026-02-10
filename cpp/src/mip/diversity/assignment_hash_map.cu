@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -11,7 +12,7 @@
 #include <utilities/copy_helpers.hpp>
 
 #include <thrust/gather.h>
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 #include <cuda/std/functional>
 
 namespace cuopt {
@@ -19,19 +20,22 @@ namespace linear_programming {
 namespace detail {
 
 struct combine_hash {
-  DI size_t operator()(size_t hash_1, size_t hash_2)
+  DI size_t operator()(size_t hash_1, size_t hash_2) const
   {
     const std::size_t magic_constant = 0x9e3779b97f4a7c15;
     hash_1 ^= hash_2 + magic_constant + (hash_1 << 12) + (hash_1 >> 4);
     return hash_1;
   }
+  
+  // Explicitly define the result type for hipcub compatibility
+  using result_type = size_t;
 };
 
 template <typename i_t, typename f_t, int TPB>
 __global__ void hash_solution_kernel(raft::device_span<size_t> assignment,
                                      raft::device_span<size_t> reduction_buffer)
 {
-  typedef cub::BlockReduce<size_t, TPB> BlockReduce;
+  typedef hipcub::BlockReduce<size_t, TPB> BlockReduce;
   __shared__ typename BlockReduce::TempStorage temp_storage;
 
   size_t th_hash = assignment.size();
@@ -48,7 +52,7 @@ template <typename i_t, typename f_t, int TPB>
 __global__ void reduce_hash_kernel(raft::device_span<size_t> reduction_buffer,
                                    size_t* global_hash_sum)
 {
-  typedef cub::BlockReduce<size_t, TPB> BlockReduce;
+  typedef hipcub::BlockReduce<size_t, TPB> BlockReduce;
   __shared__ typename BlockReduce::TempStorage temp_storage;
   size_t th_hash  = reduction_buffer[threadIdx.x];
   size_t hash_sum = BlockReduce(temp_storage).Reduce(th_hash, combine_hash(), TPB);
@@ -96,7 +100,7 @@ size_t assignment_hash_map_t<i_t, f_t>::hash_solution(solution_t<i_t, f_t>& solu
     // Determine temporary device storage requirements
     void* d_temp_storage      = nullptr;
     size_t temp_storage_bytes = 0;
-    cub::DeviceReduce::Reduce(d_temp_storage,
+    hipcub::DeviceReduce::Reduce(d_temp_storage,
                               temp_storage_bytes,
                               reduction_buffer.data(),
                               hash_sum.data(),
@@ -110,7 +114,7 @@ size_t assignment_hash_map_t<i_t, f_t>::hash_solution(solution_t<i_t, f_t>& solu
     d_temp_storage = temp_storage.data();
 
     // Run reduction
-    cub::DeviceReduce::Reduce(d_temp_storage,
+    hipcub::DeviceReduce::Reduce(d_temp_storage,
                               temp_storage_bytes,
                               reduction_buffer.data(),
                               hash_sum.data(),

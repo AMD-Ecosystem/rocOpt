@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -10,6 +11,13 @@
 #include <utilities/cuda_helpers.cuh>
 #include "../solution/solution.cuh"
 #include "found_solution.cuh"
+
+#ifdef __HIP_PLATFORM_AMD__
+// HIP requires 64-bit mask for ballot_sync with 64-wide wavefronts
+#define FULL_WARP_MASK 0xffffffffffffffffull
+#else
+#define FULL_WARP_MASK 0xffffffffu
+#endif
 
 namespace cuopt {
 namespace routing {
@@ -111,7 +119,13 @@ DI i_t fill_to_delete(const typename solution_t<i_t, f_t, REQUEST>::view_t& solu
   // Check for fragement spanning to large (no looping around)
   // Range covered goes from intra_pickup_id to intra_pickup_id + blockDim.x
   // Not include threadIdx.x in loop to always have full warps for __ballot_sync and shared writes
+#ifdef __HIP_PLATFORM_AMD__
+  // HIP has 64-wide wavefronts, ensure at least 1 element in array
+  static constexpr int NUM_WARPS = (BLOCK_SIZE / raft::WarpSize) > 0 ? (BLOCK_SIZE / raft::WarpSize) : 1;
+  __shared__ uint64_t s_pickups[NUM_WARPS];
+#else
   __shared__ uint32_t s_pickups[BLOCK_SIZE / raft::WarpSize];
+#endif
   uint32_t n_deletable_requests = 0;
   for (i_t i = intra_pickup_id; i < route_length; i += blockDim.x) {
     int is_pickup = 0;
@@ -120,13 +134,23 @@ DI i_t fill_to_delete(const typename solution_t<i_t, f_t, REQUEST>::view_t& solu
                    "Indexing should not be greater than max size");
       is_pickup = route.requests().is_pickup_node(threadIdx.x + i);
     }
-    const uint32_t pickups = __ballot_sync(~0, is_pickup);
+#ifdef __HIP_PLATFORM_AMD__
+    const uint64_t pickups = __ballot_sync(FULL_WARP_MASK, is_pickup);
+    if (threadIdx.x % raft::WarpSize == 0) s_pickups[threadIdx.x / raft::WarpSize] = pickups;
+    __syncthreads();
+// Compute amount of requests on my right side including mine
+#pragma unroll
+    for (int j = 0; j < NUM_WARPS; ++j)
+      n_deletable_requests += __popcll(s_pickups[j]);
+#else
+    const uint32_t pickups = __ballot_sync(FULL_WARP_MASK, is_pickup);
     if (threadIdx.x % raft::WarpSize == 0) s_pickups[threadIdx.x / raft::WarpSize] = pickups;
     __syncthreads();
 // Compute amount of requests on my right side including mine
 #pragma unroll
     for (int j = 0; j < BLOCK_SIZE / raft::WarpSize; ++j)
       n_deletable_requests += __popc(s_pickups[j]);
+#endif
     __syncthreads();  // To avoid race condition on next loop write
   }
 

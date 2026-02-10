@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -19,7 +20,7 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 #include <thrust/extrema.h>
 #include <thrust/gather.h>
@@ -564,7 +565,7 @@ struct OX {
     size_t tmp_storage_bytes{0};
     auto num_segments = graph.get_num_vertices();
     auto num_items    = row_size * graph.get_num_vertices();
-    cub::DeviceSegmentedSort::SortPairs(static_cast<void*>(nullptr),
+    hipcub::DeviceSegmentedSort::SortPairs(static_cast<void*>(nullptr),
                                         tmp_storage_bytes,
                                         graph.indices.data(),
                                         graph.indices.data(),
@@ -576,7 +577,7 @@ struct OX {
                                         row_offsets.data() + 1,
                                         stream_view);
     d_tmp_storage_bytes.resize(tmp_storage_bytes, stream_view);
-    cub::DeviceSegmentedSort::SortPairs(d_tmp_storage_bytes.data(),
+    hipcub::DeviceSegmentedSort::SortPairs(d_tmp_storage_bytes.data(),
                                         tmp_storage_bytes,
                                         graph.indices.data(),
                                         graph.indices.data(),

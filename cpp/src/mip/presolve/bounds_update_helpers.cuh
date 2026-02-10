@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -45,7 +46,7 @@ __global__ void calc_activity_kernel(typename problem_t<i_t, f_t>::view_t pb,
                                      typename bounds_update_data_t<i_t, f_t>::view_t upd_0,
                                      typename bounds_update_data_t<i_t, f_t>::view_t upd_1)
 {
-  using BlockReduce = cub::BlockReduce<f_t, BDIM>;
+  using BlockReduce = hipcub::BlockReduce<f_t, BDIM>;
   __shared__ typename BlockReduce::TempStorage temp_storage;
 
   i_t cnst_idx    = blockIdx.x;
@@ -103,7 +104,7 @@ template <typename i_t, typename f_t, i_t BDIM>
 __global__ void calc_activity_kernel(typename problem_t<i_t, f_t>::view_t pb,
                                      typename bounds_update_data_t<i_t, f_t>::view_t upd)
 {
-  using BlockReduce = cub::BlockReduce<f_t, BDIM>;
+  using BlockReduce = hipcub::BlockReduce<f_t, BDIM>;
   __shared__ typename BlockReduce::TempStorage temp_storage;
 
   i_t cnst_idx    = blockIdx.x;
@@ -231,7 +232,7 @@ __device__ void update_bounds(typename problem_t<i_t, f_t>::view_t pb,
                               typename bounds_update_data_t<i_t, f_t>::view_t upd_1,
                               thrust::pair<f_t, f_t> old_bnd_1)
 {
-  using BlockReduce = cub::BlockReduce<f_t, BDIM>;
+  using BlockReduce = hipcub::BlockReduce<f_t, BDIM>;
   __shared__ typename BlockReduce::TempStorage temp_storage;
 
   auto bnd_0        = old_bnd_0;
@@ -261,18 +262,34 @@ __device__ void update_bounds(typename problem_t<i_t, f_t>::view_t pb,
   __syncthreads();
   if (var_changed_0) {
     thrust::get<0>(bnd_0) =
+#ifdef __HIP_PLATFORM_AMD__
+      BlockReduce(temp_storage).Reduce(thrust::get<0>(bnd_0), cuopt::maximum_functor());
+#else
       BlockReduce(temp_storage).Reduce(thrust::get<0>(bnd_0), cuda::maximum());
+#endif
     __syncthreads();
     thrust::get<1>(bnd_0) =
+#ifdef __HIP_PLATFORM_AMD__
+      BlockReduce(temp_storage).Reduce(thrust::get<1>(bnd_0), cuopt::minimum_functor());
+#else
       BlockReduce(temp_storage).Reduce(thrust::get<1>(bnd_0), cuda::minimum());
+#endif
     __syncthreads();
   }
   if (var_changed_1) {
     thrust::get<0>(bnd_1) =
+#ifdef __HIP_PLATFORM_AMD__
+      BlockReduce(temp_storage).Reduce(thrust::get<0>(bnd_1), cuopt::maximum_functor());
+#else
       BlockReduce(temp_storage).Reduce(thrust::get<0>(bnd_1), cuda::maximum());
+#endif
     __syncthreads();
     thrust::get<1>(bnd_1) =
+#ifdef __HIP_PLATFORM_AMD__
+      BlockReduce(temp_storage).Reduce(thrust::get<1>(bnd_1), cuopt::minimum_functor());
+#else
       BlockReduce(temp_storage).Reduce(thrust::get<1>(bnd_1), cuda::minimum());
+#endif
   }
   __shared__ bool changed_0, changed_1;
   if (threadIdx.x == 0) {
@@ -296,7 +313,7 @@ __device__ void update_bounds(typename problem_t<i_t, f_t>::view_t pb,
                               typename bounds_update_data_t<i_t, f_t>::view_t upd,
                               thrust::pair<f_t, f_t> old_bnd)
 {
-  using BlockReduce = cub::BlockReduce<f_t, BDIM>;
+  using BlockReduce = hipcub::BlockReduce<f_t, BDIM>;
   __shared__ typename BlockReduce::TempStorage temp_storage;
 
   i_t var_changed = upd.changed_variables[var_idx];
@@ -313,9 +330,17 @@ __device__ void update_bounds(typename problem_t<i_t, f_t>::view_t pb,
     bnd          = update_bounds_per_cnst(pb, a, cnst_idx, cnst_lb, cnst_ub, upd, bnd, old_bnd);
   }
 
+#ifdef __HIP_PLATFORM_AMD__
+  thrust::get<0>(bnd) = BlockReduce(temp_storage).Reduce(thrust::get<0>(bnd), cuopt::maximum_functor());
+#else
   thrust::get<0>(bnd) = BlockReduce(temp_storage).Reduce(thrust::get<0>(bnd), cuda::maximum());
+#endif
   __syncthreads();
+#ifdef __HIP_PLATFORM_AMD__
+  thrust::get<1>(bnd) = BlockReduce(temp_storage).Reduce(thrust::get<1>(bnd), cuopt::minimum_functor());
+#else
   thrust::get<1>(bnd) = BlockReduce(temp_storage).Reduce(thrust::get<1>(bnd), cuda::minimum());
+#endif
   __shared__ bool changed;
   if (threadIdx.x == 0) { changed = write_updated_bounds(pb, var_idx, is_int, upd, bnd, old_bnd); }
   __syncthreads();
@@ -329,7 +354,7 @@ template <typename i_t, typename f_t, i_t BDIM>
 __global__ void update_bounds_kernel(typename problem_t<i_t, f_t>::view_t pb,
                                      typename bounds_update_data_t<i_t, f_t>::view_t upd)
 {
-  using BlockReduce = cub::BlockReduce<f_t, BDIM>;
+  using BlockReduce = hipcub::BlockReduce<f_t, BDIM>;
   __shared__ typename BlockReduce::TempStorage temp_storage;
 
   i_t var_idx    = blockIdx.x;
@@ -354,7 +379,7 @@ __global__ void update_bounds_kernel(typename problem_t<i_t, f_t>::view_t pb,
                                      typename bounds_update_data_t<i_t, f_t>::view_t upd_0,
                                      typename bounds_update_data_t<i_t, f_t>::view_t upd_1)
 {
-  using BlockReduce = cub::BlockReduce<f_t, BDIM>;
+  using BlockReduce = hipcub::BlockReduce<f_t, BDIM>;
   __shared__ typename BlockReduce::TempStorage temp_storage;
 
   i_t var_idx    = blockIdx.x;

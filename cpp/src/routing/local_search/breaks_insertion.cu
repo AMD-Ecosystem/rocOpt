@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -172,7 +173,7 @@ void find_break_insertions(solution_t<i_t, f_t, REQUEST>& sol,
         move_candidates.include_objective,
         move_candidates.weights,
         move_candidates.breaks_move_candidates.view());
-    RAFT_CUDA_TRY(cudaStreamSynchronize(sol.sol_handle->get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(sol.sol_handle->get_stream()));
   }
 }
 

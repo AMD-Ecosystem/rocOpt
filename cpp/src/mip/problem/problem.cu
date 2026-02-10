@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -30,6 +31,7 @@
 #include <thrust/tabulate.h>
 #include <thrust/tuple.h>
 #include <cuda/std/functional>
+#include <cuda/functional>  // For cuda::proclaim_return_type
 
 #include <raft/sparse/detail/cusparse_wrappers.h>
 #include <raft/core/logger.hpp>
@@ -38,7 +40,7 @@
 
 #include <unordered_set>
 
-#include <cuda_profiler_api.h>
+#include <hip/hip_runtime_api.h>
 
 namespace cuopt::linear_programming::detail {
 
@@ -368,14 +370,14 @@ void csr_to_csc_transpose(const i_t* csr_offsets,
 
   csr_to_csc_scatter_kernel<i_t, f_t><<<n_rows, 256, 0, stream>>>(
     n_rows, csr_offsets, csr_indices, csr_values, next_pos.data(), csc_indices, csc_values);
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   // Sort row indices
   rmm::device_uvector<i_t> row_ind_sorted(nnz, stream);
   rmm::device_uvector<f_t> val_sorted(nnz, stream);
 
   size_t temp_storage_bytes = 0;
-  cub::DeviceSegmentedSort::SortPairs(nullptr,
+  RAFT_CUDA_TRY(hipcub::DeviceSegmentedSort::SortPairs(nullptr,
                                       temp_storage_bytes,
                                       csc_indices,
                                       row_ind_sorted.data(),
@@ -385,10 +387,10 @@ void csr_to_csc_transpose(const i_t* csr_offsets,
                                       n_cols,
                                       csc_offsets,
                                       csc_offsets + 1,
-                                      stream);
+                                      stream));
 
   rmm::device_uvector<std::byte> temp_storage(temp_storage_bytes, stream);
-  cub::DeviceSegmentedSort::SortPairs(temp_storage.data(),
+  RAFT_CUDA_TRY(hipcub::DeviceSegmentedSort::SortPairs(temp_storage.data(),
                                       temp_storage_bytes,
                                       csc_indices,
                                       row_ind_sorted.data(),
@@ -398,7 +400,7 @@ void csr_to_csc_transpose(const i_t* csr_offsets,
                                       n_cols,
                                       csc_offsets,
                                       csc_offsets + 1,
-                                      stream);
+                                      stream));
 
   // Copy sorted results back
   raft::copy(csc_indices, row_ind_sorted.data(), nnz, stream);
@@ -410,16 +412,16 @@ void problem_t<i_t, f_t>::compute_transpose_of_problem()
 {
   raft::common::nvtx::range fun_scope("compute_transpose_of_problem");
   RAFT_CUBLAS_TRY(raft::linalg::detail::cublassetpointermode(
-    handle_ptr->get_cublas_handle(), CUBLAS_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr->get_cublas_handle(), HIPBLAS_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsesetpointermode(
-    handle_ptr->get_cusparse_handle(), CUSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr->get_cusparse_handle(), HIPSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
   // Resize what is needed for LP
   reverse_offsets.resize(n_variables + 1, handle_ptr->get_stream());
   reverse_constraints.resize(nnz, handle_ptr->get_stream());
   reverse_coefficients.resize(nnz, handle_ptr->get_stream());
 
   // Special case if A is empty
-  // as cuSparse had a bug up until 12.9 causing cusparseCsr2cscEx2 to return incorrect results
+  // as cuSparse had a bug up until 12.9 causing hipsparseCsr2cscEx2 to return incorrect results
   // for empty matrices (CUSPARSE-2319)
   // In this case, construct it manually
   if (reverse_coefficients.is_empty()) {
@@ -465,7 +467,7 @@ i_t problem_t<i_t, f_t>::get_n_binary_variables()
   n_binary_vars = thrust::count_if(handle_ptr->get_thrust_policy(),
                                    is_binary_variable.begin(),
                                    is_binary_variable.end(),
-                                   cuda::std::identity{});
+                                   identity_functor{});
   return n_binary_vars;
 }
 
@@ -978,10 +980,17 @@ void problem_t<i_t, f_t>::compute_related_variables(double time_limit)
   related_variables_offsets.set_element_to_zero_async(0, handle_ptr->get_stream());
 
   // compaction operation to get the related variable values
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm: Use explicit return type in lambda
+  auto repeating_counting_iterator = thrust::make_transform_iterator(
+    thrust::make_counting_iterator<i_t>(0),
+    [n_v = n_variables] __device__(i_t x) -> i_t { return x % n_v; });
+#else
   auto repeating_counting_iterator = thrust::make_transform_iterator(
     thrust::make_counting_iterator<i_t>(0),
     cuda::proclaim_return_type<i_t>(
       [n_v = n_variables] __device__(i_t x) -> i_t { return x % n_v; }));
+#endif
 
   i_t output_offset      = 0;
   i_t related_var_offset = 0;
@@ -1033,7 +1042,12 @@ void problem_t<i_t, f_t>::compute_related_variables(double time_limit)
                       repeating_counting_iterator + varmap.size(),
                       varmap.begin(),
                       related_variables.begin() + related_var_offset,
+#ifdef __HIP_PLATFORM_AMD__
+                      // ROCm: Use explicit return type in lambda
+                      [] __device__(i_t x) -> bool { return x == 1; });
+#else
                       cuda::proclaim_return_type<bool>([] __device__(i_t x) { return x == 1; }));
+#endif
     related_var_offset = end - related_variables.begin();
 
     // generate the related var offsets from the prefix sum
@@ -1041,9 +1055,15 @@ void problem_t<i_t, f_t>::compute_related_variables(double time_limit)
     thrust::tabulate(handle_ptr->get_thrust_policy(),
                      offset_it,
                      offset_it + slice_size,
+#ifdef __HIP_PLATFORM_AMD__
+                     // ROCm: Use explicit return type in lambda
+                     [related_var_base, offsets = offsets.data(), n_v = n_variables] __device__(
+                       i_t x) -> i_t { return related_var_base + offsets[(x + 1) * n_v - 1]; });
+#else
                      cuda::proclaim_return_type<i_t>(
                        [related_var_base, offsets = offsets.data(), n_v = n_variables] __device__(
                          i_t x) -> i_t { return related_var_base + offsets[(x + 1) * n_v - 1]; }));
+#endif
 
     output_offset += slice_size;
   }
@@ -1348,7 +1368,7 @@ void problem_t<i_t, f_t>::substitute_variables(const std::vector<i_t>& var_indic
   // Determine temporary device storage requirements
   void* d_temp_storage      = nullptr;
   size_t temp_storage_bytes = 0;
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage,
+  RAFT_CUDA_TRY(hipcub::DeviceSegmentedReduce::Reduce(d_temp_storage,
                                      temp_storage_bytes,
                                      input_transform_it,
                                      fixing_helpers.reduction_in_rhs.data(),
@@ -1357,13 +1377,13 @@ void problem_t<i_t, f_t>::substitute_variables(const std::vector<i_t>& var_indic
                                      offsets.data() + 1,
                                      cuda::std::plus<>{},
                                      initial_value,
-                                     handle_ptr->get_stream());
+                                     handle_ptr->get_stream()));
 
   rmm::device_uvector<std::uint8_t> temp_storage(temp_storage_bytes, handle_ptr->get_stream());
   d_temp_storage = thrust::raw_pointer_cast(temp_storage.data());
 
   // Run reduction
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage,
+  RAFT_CUDA_TRY(hipcub::DeviceSegmentedReduce::Reduce(d_temp_storage,
                                      temp_storage_bytes,
                                      input_transform_it,
                                      fixing_helpers.reduction_in_rhs.data(),
@@ -1372,7 +1392,7 @@ void problem_t<i_t, f_t>::substitute_variables(const std::vector<i_t>& var_indic
                                      offsets.data() + 1,
                                      cuda::std::plus<>{},
                                      initial_value,
-                                     handle_ptr->get_stream());
+                                     handle_ptr->get_stream()));
   RAFT_CHECK_CUDA(handle_ptr->get_stream());
   thrust::for_each(
     handle_ptr->get_thrust_policy(),
@@ -1471,7 +1491,7 @@ void problem_t<i_t, f_t>::fix_given_variables(problem_t<i_t, f_t>& original_prob
   // Determine temporary device storage requirements
   void* d_temp_storage      = nullptr;
   size_t temp_storage_bytes = 0;
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage,
+  RAFT_CUDA_TRY(hipcub::DeviceSegmentedReduce::Reduce(d_temp_storage,
                                      temp_storage_bytes,
                                      input_transform_it,
                                      fixing_helpers.reduction_in_rhs.data(),
@@ -1480,13 +1500,13 @@ void problem_t<i_t, f_t>::fix_given_variables(problem_t<i_t, f_t>& original_prob
                                      original_problem.offsets.data() + 1,
                                      cuda::std::plus<>{},
                                      initial_value,
-                                     handle_ptr->get_stream());
+                                     handle_ptr->get_stream()));
 
   rmm::device_uvector<std::uint8_t> temp_storage(temp_storage_bytes, handle_ptr->get_stream());
   d_temp_storage = thrust::raw_pointer_cast(temp_storage.data());
 
   // Run reduction
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage,
+  RAFT_CUDA_TRY(hipcub::DeviceSegmentedReduce::Reduce(d_temp_storage,
                                      temp_storage_bytes,
                                      input_transform_it,
                                      fixing_helpers.reduction_in_rhs.data(),
@@ -1495,7 +1515,7 @@ void problem_t<i_t, f_t>::fix_given_variables(problem_t<i_t, f_t>& original_prob
                                      original_problem.offsets.data() + 1,
                                      cuda::std::plus<>{},
                                      initial_value,
-                                     handle_ptr->get_stream());
+                                     handle_ptr->get_stream()));
   RAFT_CHECK_CUDA(handle_ptr->get_stream());
   thrust::for_each(
     handle_ptr->get_thrust_policy(),

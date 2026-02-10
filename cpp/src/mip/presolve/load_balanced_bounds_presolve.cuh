@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -72,10 +73,10 @@ class managed_stream_pool {
    */
   std::size_t get_pool_size() const noexcept { return streams_.size(); }
 
-  void wait_issued_on_event(cudaEvent_t e)
+  void wait_issued_on_event(hipEvent_t e)
   {
     for (int i = 0; i < end_unsycned + 1; ++i) {
-      cudaStreamWaitEvent(streams_[i].view(), e, 0);
+      hipStreamWaitEvent(streams_[i].view(), e, 0);
     }
   }
 
@@ -87,14 +88,14 @@ class managed_stream_pool {
     return max_streams;
   }
 
-  std::vector<cudaEvent_t> create_events_on_issued()
+  std::vector<hipEvent_t> create_events_on_issued()
   {
-    std::vector<cudaEvent_t> events(end_unsycned + 1);
+    std::vector<hipEvent_t> events(end_unsycned + 1);
     for (auto& e : events) {
-      cudaEventCreate(&e);
+      hipEventCreate(&e);
     }
     for (int i = 0; i < end_unsycned + 1; ++i) {
-      cudaEventRecord(events[i], streams_[i].view());
+      hipEventRecord(events[i], streams_[i].view());
     }
     return events;
   }
@@ -237,12 +238,12 @@ class load_balanced_bounds_presolve_t {
   bool calc_slack_graph_created;
   bool upd_bnd_graph_created;
 
-  cudaGraphExec_t calc_slack_erase_inf_cnst_exec;
-  cudaGraph_t calc_slack_erase_inf_cnst_graph;
-  cudaGraphExec_t calc_slack_exec;
-  cudaGraph_t calc_slack_graph;
-  cudaGraphExec_t upd_bnd_exec;
-  cudaGraph_t upd_bnd_graph;
+  hipGraphExec_t calc_slack_erase_inf_cnst_exec;
+  hipGraph_t calc_slack_erase_inf_cnst_graph;
+  hipGraphExec_t calc_slack_exec;
+  hipGraph_t calc_slack_graph;
+  hipGraphExec_t upd_bnd_exec;
+  hipGraph_t upd_bnd_graph;
 
   bool is_cnst_sub_warp_single_bin;
   i_t cnst_sub_warp_count;

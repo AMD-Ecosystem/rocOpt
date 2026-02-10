@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -229,7 +230,13 @@ std::unique_ptr<solver_ret_t> call_solve(
   bool is_batch_mode)
 {
   raft::common::nvtx::range fun_scope("Call Solve");
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm: hipmm's cuda_stream uses default constructor
+  rmm::cuda_stream stream{};
+#else
+  // CUDA: RMM's cuda_stream takes flags
   rmm::cuda_stream stream(static_cast<rmm::cuda_stream::flags>(flags));
+#endif
   const raft::handle_t handle_{stream};
 
   solver_ret_t response;
@@ -290,7 +297,7 @@ static int compute_max_thread(
 
   // Computing on the total_mem as LP is suppose to run on a single exclusive GPU
   std::size_t free_mem, total_mem;
-  RAFT_CUDA_TRY(cudaMemGetInfo(&free_mem, &total_mem));
+  RAFT_CUDA_TRY(hipMemGetInfo(&free_mem, &total_mem));
 
   // Approximate the necessary memory for each problem
   std::size_t needed_memory = 0;
@@ -341,7 +348,7 @@ std::pair<std::vector<std::unique_ptr<solver_ret_t>>, double> call_batch_solve(
 
 #pragma omp parallel for num_threads(max_thread)
   for (std::size_t i = 0; i < size; ++i)
-    list[i] = call_solve(data_models[i], solver_settings, cudaStreamNonBlocking, is_batch_mode);
+    list[i] = call_solve(data_models[i], solver_settings, hipStreamNonBlocking, is_batch_mode);
 
   auto end      = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_solver);

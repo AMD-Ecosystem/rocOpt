@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -263,7 +264,7 @@ class fj_t {
   rmm::device_uvector<fj_load_balancing_workid_mapping_t> work_id_to_nonbin_var_idx;
   rmm::device_uvector<i_t> work_ids_for_related_vars;
 
-  cudaGraphExec_t graph_instance;
+  hipGraphExec_t graph_instance;
   bool graph_created = false;
 
   // kernel launch dimensions, computed once inside the constructor
@@ -292,9 +293,9 @@ class fj_t {
     rmm::cuda_stream stream;
     rmm::cuda_stream load_balancing_bin_stream;
     rmm::cuda_stream load_balancing_nonbin_stream;
-    event_handler_t load_balancing_start_event{cudaEventDisableTiming};
-    event_handler_t load_balancing_bin_finished_event{cudaEventDisableTiming};
-    event_handler_t load_balancing_nonbin_finished_event{cudaEventDisableTiming};
+    event_handler_t load_balancing_start_event{hipEventDisableTiming};
+    event_handler_t load_balancing_bin_finished_event{hipEventDisableTiming};
+    event_handler_t load_balancing_nonbin_finished_event{hipEventDisableTiming};
 
     rmm::device_scalar<i_t> selected_var;
     rmm::device_scalar<f_t> violation_score;
@@ -313,7 +314,7 @@ class fj_t {
     rmm::device_scalar<i_t> break_condition;
     // this is needed to prevent race condition in update_weights_kernel
     rmm::device_scalar<i_t> temp_break_condition;
-    rmm::device_scalar<cub::KeyValuePair<i_t, f_t>> best_jump_idx;
+    rmm::device_scalar<hipcub::KeyValuePair<i_t, f_t>> best_jump_idx;
     // used with FEASIBLE_FIRST in order to allow infeasible moves for a certain number of
     // iterations
     rmm::device_scalar<i_t> iterations_until_feasible_counter;
@@ -377,7 +378,7 @@ class fj_t {
         incumbent_objective(0.0, fj.handle_ptr->get_stream()),
         iterations_until_feasible_counter(0, fj.handle_ptr->get_stream()),
         full_refresh_iteration(0, fj.handle_ptr->get_stream()),
-        best_jump_idx(cub::KeyValuePair<i_t, f_t>{}, fj.handle_ptr->get_stream()),
+        best_jump_idx(hipcub::KeyValuePair<i_t, f_t>{}, fj.handle_ptr->get_stream()),
         violated_constraints(fj.pb_ptr->n_constraints, fj.handle_ptr->get_stream()),
         candidate_variables(fj.pb_ptr->n_variables, fj.handle_ptr->get_stream()),
         iteration_related_variables(fj.pb_ptr->n_variables, fj.handle_ptr->get_stream()),
@@ -421,12 +422,12 @@ class fj_t {
     {
       // Allocate space for the objective dot product reduction
       size_t temp_storage_bytes = 0;
-      cub::DeviceReduce::Sum(nullptr,
+      RAFT_CUDA_TRY(hipcub::DeviceReduce::Sum(nullptr,
                              temp_storage_bytes,
                              dot_product_buffer.data(),
                              incumbent_objective.data(),
                              fj.pb_ptr->n_variables,
-                             fj.handle_ptr->get_stream());
+                             fj.handle_ptr->get_stream()));
 
       // Allocate temporary storage
       cub_storage_bytes.resize(temp_storage_bytes, fj.handle_ptr->get_stream());
@@ -501,7 +502,7 @@ class fj_t {
       f_t* objective_weight;
       i_t* iterations_until_feasible_counter;
       i_t* full_refresh_iteration;
-      cub::KeyValuePair<i_t, f_t>* best_jump_idx;
+      hipcub::KeyValuePair<i_t, f_t>* best_jump_idx;
       f_t stop_threshold;
       i_t* small_move_tabu;
 

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -36,7 +37,7 @@ HDI bool diverse_equal(f_t val1, f_t val2, f_t lb, f_t ub, bool is_integer, f_t 
     range = int_tol;
   } else {
     range = (ub - lb) / 10;
-    range = min(range, 0.25);
+    range = std::min(range, static_cast<f_t>(0.25));
   }
   return integer_equal<f_t>(val1, val2, range);
 }

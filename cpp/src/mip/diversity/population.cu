@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -367,8 +368,8 @@ void population_t<i_t, f_t>::adjust_weights_according_to_best_feasible()
                     best().get_quality(weights),
                     best().get_objective());
     cuopt_assert(weighted_violation_of_best > 1e-10, "Weighted violation of best is not positive");
-    // fixme
-    weighted_violation_of_best = max(weighted_violation_of_best, 1e-10);
+    // Ensure we use floating-point max to avoid int truncation
+    weighted_violation_of_best = max(weighted_violation_of_best, f_t(1e-10));
     f_t quality_difference     = best_feasible().get_quality(weights) - best().get_quality(weights);
     CUOPT_LOG_DEBUG("quality_difference %f best_feasible_quality %f best_quality %f",
                     quality_difference,

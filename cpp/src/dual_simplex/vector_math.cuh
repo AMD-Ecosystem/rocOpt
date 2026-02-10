@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -7,7 +8,7 @@
 
 #pragma once
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
@@ -34,7 +35,7 @@ f_t device_custom_vector_norm_inf(InputIteratorT in, i_t size, rmm::cuda_stream_
   size_t temp_storage_bytes = 0;
   f_t init                  = 0;
   auto custom_op            = norm_inf_max{};
-  cub::DeviceReduce::Reduce(d_temp_storage.data(),
+  hipcub::DeviceReduce::Reduce(d_temp_storage.data(),
                             temp_storage_bytes,
                             in,
                             d_out.data(),
@@ -45,7 +46,7 @@ f_t device_custom_vector_norm_inf(InputIteratorT in, i_t size, rmm::cuda_stream_
 
   d_temp_storage.resize(temp_storage_bytes, stream_view);
 
-  cub::DeviceReduce::Reduce(d_temp_storage.data(),
+  hipcub::DeviceReduce::Reduce(d_temp_storage.data(),
                             temp_storage_bytes,
                             in,
                             d_out.data(),

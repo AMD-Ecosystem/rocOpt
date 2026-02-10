@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -10,7 +11,7 @@
 #include <routing/routing_details.hpp>
 #include <routing/structures.hpp>
 
-#include <cuda_fp16.h>
+#include <hip/hip_fp16.h>
 
 namespace cuopt {
 namespace routing {

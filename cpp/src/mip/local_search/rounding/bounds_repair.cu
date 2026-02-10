@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -91,7 +92,7 @@ f_t bounds_repair_t<i_t, f_t>::get_ii_violation(problem_t<i_t, f_t>& problem)
                               thrust::make_counting_iterator(0) + problem.n_constraints,
                               violated_cstr_map.data(),
                               violated_constraints.data(),
-                              cuda::std::identity{});
+                              identity_functor{});
   h_n_violated_cstr   = iter - violated_constraints.data();
   f_t total_violation = total_vio.value(handle_ptr->get_stream());
   CUOPT_LOG_TRACE(

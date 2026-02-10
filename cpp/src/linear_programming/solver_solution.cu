@@ -214,7 +214,7 @@ void optimization_problem_solution_t<i_t, f_t>::write_to_file(std::string_view f
   raft::copy(
     dual_solution.data(), dual_solution_.data(), dual_solution_.size(), stream_view.value());
   raft::copy(reduced_cost.data(), reduced_cost_.data(), reduced_cost_.size(), stream_view.value());
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view.value()));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view.value()));
 
   myfile << "{ " << std::endl;
   myfile << "\t\"Termination reason\" : \"" << get_termination_status_string() << "\","
@@ -377,7 +377,7 @@ void optimization_problem_solution_t<i_t, f_t>::write_to_sol_file(
   solution.resize(primal_solution_.size());
   raft::copy(
     solution.data(), primal_solution_.data(), primal_solution_.size(), stream_view.value());
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view.value()));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view.value()));
   solution_writer_t::write_solution_to_sol_file(
     std::string(filename), status, objective_value, var_names_, solution);
 }

@@ -16,7 +16,7 @@
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
 
-#include <cusparse_v2.h>
+#include <hipsparse/hipsparse.h>
 
 namespace cuopt::linear_programming::detail {
 
@@ -32,10 +32,10 @@ class cusparse_sp_mat_descr_wrapper_t {
 
   void create(int64_t m, int64_t n, int64_t nnz, i_t* offsets, i_t* indices, f_t* values);
 
-  operator cusparseSpMatDescr_t() const;
+  operator hipsparseSpMatDescr_t() const;
 
  private:
-  cusparseSpMatDescr_t descr_;
+  hipsparseSpMatDescr_t descr_;
   bool need_destruction_;
 };
 
@@ -51,10 +51,10 @@ class cusparse_dn_vec_descr_wrapper_t {
 
   void create(int64_t size, f_t* values);
 
-  operator cusparseDnVecDescr_t() const;
+  operator hipsparseDnVecDescr_t() const;
 
  private:
-  cusparseDnVecDescr_t descr_;
+  hipsparseDnVecDescr_t descr_;
   bool need_destruction_;
 };
 

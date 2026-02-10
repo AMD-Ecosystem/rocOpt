@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -24,10 +25,11 @@
 #include <thrust/count.h>
 #include <thrust/logical.h>
 #include <thrust/sort.h>
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 #include <cuda/std/functional>
 
-#include <cooperative_groups.h>
+#include <hip/hip_cooperative_groups.h>
+#include <cuda/functional>  // For cuda::proclaim_return_type
 
 #define FJ_LOG_PREFIX "FJ: "
 
@@ -106,7 +108,7 @@ fj_t<i_t, f_t>::fj_t(mip_solver_context_t<i_t, f_t>& context_, fj_settings_t in_
 template <typename i_t, typename f_t>
 void fj_t<i_t, f_t>::reset_cuda_graph()
 {
-  if (graph_created) cudaGraphExecDestroy(graph_instance);
+  if (graph_created) (void)hipGraphExecDestroy(graph_instance);
   graph_created = false;
 }
 
@@ -225,7 +227,7 @@ fj_t<i_t, f_t>::climber_data_t::view_t fj_t<i_t, f_t>::climber_data_t::view()
   v.stop_threshold                    = fj.stop_threshold;
   v.iterations_until_feasible_counter = iterations_until_feasible_counter.data();
   v.full_refresh_iteration            = full_refresh_iteration.data();
-  RAFT_CUDA_TRY(cudaGetSymbolAddress((void**)&v.settings, device_settings));
+  RAFT_CUDA_TRY(hipGetSymbolAddress((void**)&v.settings, device_settings));
 
   return v;
 }
@@ -269,7 +271,7 @@ void fj_t<i_t, f_t>::copy_weights(const weight_t<i_t, f_t>& weights,
                     weights.objective_weight.data(),
                     weights.objective_weight.data() + 1,
                     objective_weight.data(),
-                    cuda::std::identity());
+                    identity_functor());
 }
 
 template <typename i_t, typename f_t>
@@ -484,23 +486,23 @@ void fj_t<i_t, f_t>::climber_init(i_t climber_idx, const rmm::cuda_stream_view& 
 
   size_t temp_storage_bytes = 0;
   for (i_t i = 0; i < 2; ++i) {
-    cub::DeviceScan::InclusiveSum(i == 0 ? nullptr : climber->cub_storage_bytes.data(),
+    RAFT_CUDA_TRY(hipcub::DeviceScan::InclusiveSum(i == 0 ? nullptr : climber->cub_storage_bytes.data(),
                                   temp_storage_bytes,
                                   row_size_it_bin,
                                   row_size_bin_prefix_sum.data(),
                                   pb_ptr->binary_indices.size(),
-                                  climber_stream);
+                                  climber_stream));
     if (i == 0 && temp_storage_bytes > climber->cub_storage_bytes.size())
       climber->cub_storage_bytes.resize(temp_storage_bytes, climber_stream);
   }
   temp_storage_bytes = 0;
   for (i_t i = 0; i < 2; ++i) {
-    cub::DeviceScan::InclusiveSum(i == 0 ? nullptr : climber->cub_storage_bytes.data(),
+    RAFT_CUDA_TRY(hipcub::DeviceScan::InclusiveSum(i == 0 ? nullptr : climber->cub_storage_bytes.data(),
                                   temp_storage_bytes,
                                   row_size_it_nonbin,
                                   row_size_nonbin_prefix_sum.data(),
                                   pb_ptr->nonbinary_indices.size(),
-                                  climber_stream);
+                                  climber_stream));
     if (i == 0 && temp_storage_bytes > climber->cub_storage_bytes.size())
       climber->cub_storage_bytes.resize(temp_storage_bytes, climber_stream);
   }
@@ -516,14 +518,14 @@ void fj_t<i_t, f_t>::climber_init(i_t climber_idx, const rmm::cuda_stream_view& 
     // TODO: DeviceSegmentedReduce doesn't use full-fleged load balancing (relies on a 1 thread
     // block:1 segment mapping) Write another LB kernel for this?
     for (i_t i = 0; i < 2; ++i) {
-      cub::DeviceSegmentedReduce::Sum(i == 0 ? nullptr : climber->cub_storage_bytes.data(),
+      RAFT_CUDA_TRY(hipcub::DeviceSegmentedReduce::Sum(i == 0 ? nullptr : climber->cub_storage_bytes.data(),
                                       temp_storage_bytes,
                                       row_size_it,
                                       work_ids_for_related_vars.data(),
                                       pb_ptr->n_variables,
                                       pb_ptr->related_variables_offsets.begin(),
                                       pb_ptr->related_variables_offsets.begin() + 1,
-                                      climber_stream);
+                                      climber_stream));
       if (i == 0 && temp_storage_bytes > climber->cub_storage_bytes.size())
         climber->cub_storage_bytes.resize(temp_storage_bytes, climber_stream);
     }
@@ -596,12 +598,12 @@ void fj_t<i_t, f_t>::load_balancing_score_update(const rmm::cuda_stream_view& st
   data.iteration_related_variables.clear(stream);
 
   void* kernel_args[] = {&v};
-  cudaLaunchCooperativeKernel((void*)load_balancing_prepare_iteration<i_t, f_t>,
+  RAFT_CUDA_TRY(hipLaunchCooperativeKernel((void*)load_balancing_prepare_iteration<i_t, f_t>,
                               grid_load_balancing_prepare,
                               blocks_load_balancing_prepare,
                               kernel_args,
                               0,
-                              stream);
+                              stream));
 
   data.load_balancing_start_event.record(stream);
 
@@ -678,7 +680,7 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
   // Load-balanced codepath not updated yet to handle rounding mode
   if (settings.mode == fj_mode_t::ROUNDING) { use_load_balancing = false; }
 
-  cudaGraph_t graph;
+  hipGraph_t graph;
   void* kernel_args[]            = {&v};
   bool force_reset               = false;
   void* reset_moves_args[]       = {&v, &force_reset};
@@ -690,19 +692,19 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
     auto valid_move_iterator             = thrust::make_transform_iterator(
       thrust::counting_iterator<i_t>(0),
       cuda::proclaim_return_type<i_t>([v] __device__(i_t i) -> i_t { return v.admits_move(i); }));
-    cub::DeviceSelect::Flagged((void*)nullptr,
+    RAFT_CUDA_TRY(hipcub::DeviceSelect::Flagged((void*)nullptr,
                                compaction_temp_storage_bytes,
                                thrust::counting_iterator<i_t>(0),
                                valid_move_iterator,
                                data.candidate_variables.contents.data(),
                                data.candidate_variables.set_size.data(),
                                pb_ptr->n_variables,
-                               climber_stream);
+                               climber_stream));
     if (compaction_temp_storage_bytes > data.cub_storage_bytes.size()) {
       data.cub_storage_bytes.resize(compaction_temp_storage_bytes, climber_stream);
     }
 
-    if (use_graph) { cudaStreamBeginCapture(climber_stream, cudaStreamCaptureModeThreadLocal); }
+    if (use_graph) { RAFT_CUDA_TRY(hipStreamBeginCapture(climber_stream, hipStreamCaptureModeThreadLocal)); }
     for (i_t i = 0; i < (use_graph ? iterations_per_graph : 1); ++i) {
       {
         // related varialbe array has to be dynamically computed each iteration
@@ -715,32 +717,32 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
           load_balancing_score_update(climber_stream, climber_idx);
         } else {
           if (is_binary_pb) {
-            cudaLaunchCooperativeKernel(
+            RAFT_CUDA_TRY(hipLaunchCooperativeKernel(
               (void*)compute_mtm_moves_kernel<i_t, f_t, MTMMoveType::FJ_MTM_VIOLATED, true>,
               grid_resetmoves_bin,
               blocks_resetmoves_bin,
               reset_moves_args,
               0,
-              climber_stream);
+              climber_stream));
           } else {
-            cudaLaunchCooperativeKernel(
+            RAFT_CUDA_TRY(hipLaunchCooperativeKernel(
               (void*)compute_mtm_moves_kernel<i_t, f_t, MTMMoveType::FJ_MTM_VIOLATED, false>,
               grid_resetmoves,
               blocks_resetmoves,
               reset_moves_args,
               0,
-              climber_stream);
+              climber_stream));
           }
         }
 #if FJ_DEBUG_LOAD_BALANCING
         if (use_load_balancing) {
-          cudaLaunchCooperativeKernel((void*)compute_mtm_moves_kernel<i_t, f_t>,
+          hipLaunchCooperativeKernel((void*)compute_mtm_moves_kernel<i_t, f_t>,
                                       grid_resetmoves_bin,
                                       blocks_resetmoves_bin,
                                       reset_moves_args,
                                       0,
                                       climber_stream);
-          cudaLaunchCooperativeKernel((void*)load_balancing_sanity_checks<i_t, f_t>,
+          hipLaunchCooperativeKernel((void*)load_balancing_sanity_checks<i_t, f_t>,
                                       512,
                                       128,
                                       kernel_args,
@@ -749,68 +751,73 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
         }
 #endif
 
-        cudaLaunchKernel((void*)update_lift_moves_kernel<i_t, f_t>,
+        RAFT_CUDA_TRY(hipLaunchKernel((void*)update_lift_moves_kernel<i_t, f_t>,
                          grid_lift_move,
                          blocks_lift_move,
                          kernel_args,
                          0,
-                         climber_stream);
-        cudaLaunchKernel((void*)update_breakthrough_moves_kernel<i_t, f_t>,
+                         climber_stream));
+        RAFT_CUDA_TRY(hipLaunchKernel((void*)update_breakthrough_moves_kernel<i_t, f_t>,
                          grid_lift_move,
                          blocks_lift_move,
                          kernel_args,
                          0,
-                         climber_stream);
+                         climber_stream));
       }
 
       // compaction kernel
-      cub::DeviceSelect::Flagged((void*)data.cub_storage_bytes.data(),
+      RAFT_CUDA_TRY(hipcub::DeviceSelect::Flagged((void*)data.cub_storage_bytes.data(),
                                  compaction_temp_storage_bytes,
                                  thrust::counting_iterator<i_t>(0),
                                  valid_move_iterator,
                                  data.candidate_variables.contents.data(),
                                  data.candidate_variables.set_size.data(),
                                  pb_ptr->n_variables,
-                                 climber_stream);
+                                 climber_stream));
 
-      cudaLaunchKernel((void*)select_variable_kernel<i_t, f_t>,
+      RAFT_CUDA_TRY(hipLaunchKernel((void*)select_variable_kernel<i_t, f_t>,
                        dim3(1),
                        dim3(256),
                        kernel_args,
                        0,
-                       climber_stream);
+                       climber_stream));
 
-      cudaLaunchCooperativeKernel((void*)handle_local_minimum_kernel<i_t, f_t>,
+      RAFT_CUDA_TRY(hipLaunchCooperativeKernel((void*)handle_local_minimum_kernel<i_t, f_t>,
                                   grid_update_weights,
                                   blocks_update_weights,
                                   kernel_args,
                                   0,
-                                  climber_stream);
+                                  climber_stream));
       raft::copy(data.break_condition.data(), data.temp_break_condition.data(), 1, climber_stream);
-      cudaLaunchKernel((void*)update_assignment_kernel<i_t, f_t>,
+      RAFT_CUDA_TRY(hipLaunchKernel((void*)update_assignment_kernel<i_t, f_t>,
                        grid_setval,
                        blocks_setval,
                        update_assignment_args,
                        0,
-                       climber_stream);
-      cudaLaunchKernel((void*)update_changed_constraints_kernel<i_t, f_t>,
+                       climber_stream));
+      RAFT_CUDA_TRY(hipLaunchKernel((void*)update_changed_constraints_kernel<i_t, f_t>,
                        1,
                        blocks_update_changed_constraints,
                        kernel_args,
                        0,
-                       climber_stream);
+                       climber_stream));
     }
 
     if (use_graph) {
-      cudaStreamEndCapture(climber_stream, &graph);
-      cudaGraphInstantiate(&graph_instance, graph);
+      RAFT_CUDA_TRY(hipStreamEndCapture(climber_stream, &graph));
+#ifdef __HIP_PLATFORM_AMD__
+      // HIP requires 5 arguments for hipGraphInstantiate
+      RAFT_CUDA_TRY(hipGraphInstantiate(&graph_instance, graph, nullptr, nullptr, 0));
+#else
+      RAFT_CUDA_TRY(hipGraphInstantiate(&graph_instance, graph));
+#endif
       RAFT_CHECK_CUDA(climber_stream);
-      cudaGraphDestroy(graph);
+      RAFT_CUDA_TRY(hipGraphDestroy(graph));
       graph_created = true;
     }
   }
 
-  if (use_graph) cudaGraphLaunch(graph_instance, climber_stream);
+  if (use_graph) RAFT_CUDA_TRY(hipGraphLaunch(graph_instance, climber_stream));
 }
 
 template <typename i_t, typename f_t>
@@ -986,7 +993,7 @@ i_t fj_t<i_t, f_t>::alloc_max_climbers(i_t desired_climbers)
     } catch (const rmm::out_of_memory&) {
       n_climbers /= 2;
       alloc_failed = true;
-      cudaGetLastError();
+      (void)hipGetLastError();  // Clear error state after OOM
     }
   } while (alloc_failed && n_climbers > 0);
   cuopt_expects(n_climbers > 0,

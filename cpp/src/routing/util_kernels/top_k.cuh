@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -8,11 +9,19 @@
 #include <routing/local_search/cycle_finder/cycle_finder.hpp>
 #include <utilities/macros.cuh>
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hipcub/block/block_load.hpp>
+#include <hipcub/block/block_radix_sort.hpp>
+#include <hipcub/block/block_reduce.hpp>
+#include <hipcub/block/block_shuffle.hpp>
+#include <hipcub/block/block_store.hpp>
+#else
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_radix_sort.cuh>
+#include <cub/block/block_reduce.cuh>
 #include <cub/block/block_shuffle.cuh>
 #include <cub/block/block_store.cuh>
-#include <cub/cub.cuh>
+#endif
 
 #include <cuda/std/type_traits>
 
@@ -20,6 +29,8 @@ namespace cuopt {
 namespace routing {
 namespace detail {
 
+#ifndef __HIP_PLATFORM_AMD__
+// Decomposer for CUDA - uses cuda::std::tuple
 template <typename cand_t>
 struct decomposer_t {
   __device__ ::cuda::std::tuple<double&> operator()(cand_t& key) const
@@ -27,6 +38,7 @@ struct decomposer_t {
     return {key.selection_delta};
   }
 };
+#endif
 
 template <typename output_t>
 constexpr auto get_default()
@@ -58,25 +70,25 @@ DI int top_k_indices_per_row(i_t row_id,
   constexpr int sort_items_per_iteration = items_per_thread * TPB;
 
   // TODO : shared memory bank size 8 bytes
-  using block_sort          = cub::BlockRadixSort<output_t, TPB, items_per_thread, int>;
+  using block_sort          = hipcub::BlockRadixSort<output_t, TPB, items_per_thread, int>;
   using temp_sort_storage_t = typename block_sort::TempStorage;
 
-  using block_load_sort          = cub::BlockLoad<output_t, TPB, items_per_thread>;
+  using block_load_sort          = hipcub::BlockLoad<output_t, TPB, items_per_thread>;
   using temp_load_sort_storage_t = typename block_load_sort::TempStorage;
 
-  using block_load          = cub::BlockLoad<output_t, TPB, loads_per_thread>;
+  using block_load          = hipcub::BlockLoad<output_t, TPB, loads_per_thread>;
   using temp_load_storage_t = typename block_load::TempStorage;
 
-  using block_shuffle       = cub::BlockShuffle<output_t, TPB>;
+  using block_shuffle       = hipcub::BlockShuffle<output_t, TPB>;
   using temp_shfl_storage_t = typename block_shuffle::TempStorage;
 
-  using block_store_key    = cub::BlockStore<output_t, TPB, items_per_thread>;
+  using block_store_key    = hipcub::BlockStore<output_t, TPB, items_per_thread>;
   using temp_key_storage_t = typename block_store_key::TempStorage;
 
-  using block_store_val    = cub::BlockStore<int, TPB, items_per_thread>;
+  using block_store_val    = hipcub::BlockStore<int, TPB, items_per_thread>;
   using temp_val_storage_t = typename block_store_val::TempStorage;
 
-  using block_reduce          = cub::BlockReduce<int, TPB>;
+  using block_reduce          = hipcub::BlockReduce<int, TPB>;
   using temp_reduce_storage_t = typename block_reduce::TempStorage;
 
   __shared__ union {
@@ -128,7 +140,31 @@ DI int top_k_indices_per_row(i_t row_id,
   if constexpr (::cuda::std::is_same_v<output_t, double>) {
     block_sort(temp_storage.sort).Sort(sort_cost, col_id);
   } else {
+#ifdef __HIP_PLATFORM_AMD__
+    // HIP/rocprim doesn't support decomposer with cuda::std::tuple
+    // Sort output_t values by their selection_delta, col_id follows
+    // Since we need to sort both arrays by the same key, we do two passes:
+    // 1. Sort (selection_delta, sort_cost) to reorder sort_cost
+    // 2. Sort (selection_delta, col_id) to reorder col_id
+    // Both use the same original keys so they end up in the same order
+    double sort_keys[items_per_thread];
+    double sort_keys2[items_per_thread];
+    for (int i = 0; i < items_per_thread; ++i) {
+      sort_keys[i] = sort_cost[i].selection_delta;
+      sort_keys2[i] = sort_cost[i].selection_delta;
+    }
+    // Sort sort_cost by selection_delta
+    using key_cost_sort = hipcub::BlockRadixSort<double, TPB, items_per_thread, output_t>;
+    __shared__ typename key_cost_sort::TempStorage kc_sort_storage;
+    key_cost_sort(kc_sort_storage).Sort(sort_keys, sort_cost);
+    __syncthreads();
+    // Sort col_id by the same original selection_delta values
+    using key_idx_sort = hipcub::BlockRadixSort<double, TPB, items_per_thread, int>;
+    __shared__ typename key_idx_sort::TempStorage ki_sort_storage;
+    key_idx_sort(ki_sort_storage).Sort(sort_keys2, col_id);
+#else
     block_sort(temp_storage.sort).Sort(sort_cost, col_id, decomposer_t<output_t>{});
+#endif
   }
 
   __syncthreads();
@@ -176,7 +212,24 @@ DI int top_k_indices_per_row(i_t row_id,
     if constexpr (::cuda::std::is_same_v<output_t, double>) {
       block_sort(temp_storage.sort).Sort(sort_cost, col_id);
     } else {
+#ifdef __HIP_PLATFORM_AMD__
+      // HIP/rocprim doesn't support decomposer with cuda::std::tuple
+      double sort_keys[items_per_thread];
+      double sort_keys2[items_per_thread];
+      for (int i = 0; i < items_per_thread; ++i) {
+        sort_keys[i] = sort_cost[i].selection_delta;
+        sort_keys2[i] = sort_cost[i].selection_delta;
+      }
+      using key_cost_sort = hipcub::BlockRadixSort<double, TPB, items_per_thread, output_t>;
+      __shared__ typename key_cost_sort::TempStorage kc_sort_storage2;
+      key_cost_sort(kc_sort_storage2).Sort(sort_keys, sort_cost);
+      __syncthreads();
+      using key_idx_sort = hipcub::BlockRadixSort<double, TPB, items_per_thread, int>;
+      __shared__ typename key_idx_sort::TempStorage ki_sort_storage2;
+      key_idx_sort(ki_sort_storage2).Sort(sort_keys2, col_id);
+#else
       block_sort(temp_storage.sort).Sort(sort_cost, col_id, decomposer_t<output_t>{});
+#endif
     }
     __syncthreads();
 

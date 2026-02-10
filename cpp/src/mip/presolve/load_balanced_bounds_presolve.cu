@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -18,7 +19,7 @@
 #include <mip/problem/load_balanced_problem.cuh>
 #include <utilities/device_utils.cuh>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 #include <raft/common/nvtx.hpp>
 #include "load_balanced_bounds_presolve.cuh"
 #include "load_balanced_bounds_presolve_helpers.cuh"
@@ -82,10 +83,10 @@ template <typename i_t, typename f_t>
 load_balanced_bounds_presolve_t<i_t, f_t>::~load_balanced_bounds_presolve_t()
 {
   if (calc_slack_erase_inf_cnst_graph_created) {
-    cudaGraphExecDestroy(calc_slack_erase_inf_cnst_exec);
+    hipGraphExecDestroy(calc_slack_erase_inf_cnst_exec);
   }
-  if (calc_slack_graph_created) { cudaGraphExecDestroy(calc_slack_exec); }
-  if (upd_bnd_graph_created) { cudaGraphExecDestroy(upd_bnd_exec); }
+  if (calc_slack_graph_created) { hipGraphExecDestroy(calc_slack_exec); }
+  if (upd_bnd_graph_created) { hipGraphExecDestroy(upd_bnd_exec); }
 }
 
 template <typename i_t>
@@ -162,17 +163,17 @@ void load_balanced_bounds_presolve_t<i_t, f_t>::update_device_bounds(
 template <typename DryRunFunc, typename CaptureGraphFunc>
 bool build_graph(managed_stream_pool& streams,
                  const raft::handle_t* handle_ptr,
-                 cudaGraph_t& graph,
-                 cudaGraphExec_t& graph_exec,
+                 hipGraph_t& graph,
+                 hipGraphExec_t& graph_exec,
                  DryRunFunc d_func,
                  CaptureGraphFunc g_func)
 {
   bool graph_created = false;
-  cudaEvent_t fork_stream_event;
-  cudaEventCreate(&fork_stream_event);
+  hipEvent_t fork_stream_event;
+  hipEventCreate(&fork_stream_event);
 
-  cudaStreamBeginCapture(handle_ptr->get_stream(), cudaStreamCaptureModeThreadLocal);
-  cudaEventRecord(fork_stream_event, handle_ptr->get_stream());
+  hipStreamBeginCapture(handle_ptr->get_stream(), hipStreamCaptureModeThreadLocal);
+  hipEventRecord(fork_stream_event, handle_ptr->get_stream());
 
   // dry-run - managed pool tracks how many streams were issued
   d_func();
@@ -183,22 +184,30 @@ bool build_graph(managed_stream_pool& streams,
   auto activity_done = streams.create_events_on_issued();
   streams.reset_issued();
   for (auto& e : activity_done) {
-    cudaStreamWaitEvent(handle_ptr->get_stream(), e);
+    hipStreamWaitEvent(handle_ptr->get_stream(), e);
   }
 
-  cudaStreamEndCapture(handle_ptr->get_stream(), &graph);
+  hipStreamEndCapture(handle_ptr->get_stream(), &graph);
   RAFT_CHECK_CUDA(handle_ptr->get_stream());
 
   if (graph_exec != nullptr) {
-    cudaGraphExecDestroy(graph_exec);
-    cudaGraphInstantiate(&graph_exec, graph);
+    hipGraphExecDestroy(graph_exec);
+#ifdef __HIP_PLATFORM_AMD__
+    hipGraphInstantiate(&graph_exec, graph, nullptr, nullptr, 0);
+#else
+    hipGraphInstantiate(&graph_exec, graph);
+#endif
     RAFT_CHECK_CUDA(handle_ptr->get_stream());
   } else {
-    cudaGraphInstantiate(&graph_exec, graph);
+#ifdef __HIP_PLATFORM_AMD__
+    hipGraphInstantiate(&graph_exec, graph, nullptr, nullptr, 0);
+#else
+    hipGraphInstantiate(&graph_exec, graph);
+#endif
     RAFT_CHECK_CUDA(handle_ptr->get_stream());
   }
 
-  cudaGraphDestroy(graph);
+  hipGraphDestroy(graph);
   graph_created = true;
 
   handle_ptr->get_stream().synchronize();
@@ -345,22 +354,22 @@ template <typename i_t, typename f_t>
 void load_balanced_bounds_presolve_t<i_t, f_t>::create_bounds_update_graph()
 {
   using f_t2 = typename type_2<f_t>::type;
-  cudaGraph_t upd_graph;
-  cudaGraphCreate(&upd_graph, 0);
-  cudaGraphNode_t bounds_changed_node;
+  hipGraph_t upd_graph;
+  hipGraphCreate(&upd_graph, 0);
+  hipGraphNode_t bounds_changed_node;
   {
     i_t* bounds_changed_ptr = bounds_changed.data();
 
-    cudaMemcpy3DParms memcpyParams = {0};
+    hipMemcpy3DParms memcpyParams = {0};
     memcpyParams.srcArray          = NULL;
-    memcpyParams.srcPos            = make_cudaPos(0, 0, 0);
-    memcpyParams.srcPtr            = make_cudaPitchedPtr(bounds_changed_ptr, sizeof(i_t), 1, 1);
+    memcpyParams.srcPos            = make_hipPos(0, 0, 0);
+    memcpyParams.srcPtr            = make_hipPitchedPtr(bounds_changed_ptr, sizeof(i_t), 1, 1);
     memcpyParams.dstArray          = NULL;
-    memcpyParams.dstPos            = make_cudaPos(0, 0, 0);
-    memcpyParams.dstPtr            = make_cudaPitchedPtr(&h_bounds_changed, sizeof(i_t), 1, 1);
-    memcpyParams.extent            = make_cudaExtent(sizeof(i_t), 1, 1);
-    memcpyParams.kind              = cudaMemcpyDeviceToHost;
-    cudaGraphAddMemcpyNode(&bounds_changed_node, upd_graph, NULL, 0, &memcpyParams);
+    memcpyParams.dstPos            = make_hipPos(0, 0, 0);
+    memcpyParams.dstPtr            = make_hipPitchedPtr(&h_bounds_changed, sizeof(i_t), 1, 1);
+    memcpyParams.extent            = make_hipExtent(sizeof(i_t), 1, 1);
+    memcpyParams.kind              = hipMemcpyDeviceToHost;
+    hipGraphAddMemcpyNode(&bounds_changed_node, upd_graph, NULL, 0, &memcpyParams);
   }
 
   auto bounds_update_view = get_bounds_update_view(*pb);
@@ -375,10 +384,10 @@ void load_balanced_bounds_presolve_t<i_t, f_t>::create_bounds_update_graph()
                                                        pb->vars_bin_offsets,
                                                        heavy_degree_cutoff,
                                                        num_blocks_heavy_vars);
-  RAFT_CUDA_TRY(cudaGetLastError());
+  RAFT_CUDA_TRY(hipGetLastError());
   create_update_bounds_per_block<i_t, f_t, f_t2>(
     upd_graph, bounds_changed_node, bounds_update_view, pb->vars_bin_offsets, heavy_degree_cutoff);
-  RAFT_CUDA_TRY(cudaGetLastError());
+  RAFT_CUDA_TRY(hipGetLastError());
   create_update_bounds_sub_warp<i_t, f_t, f_t2>(upd_graph,
                                                 bounds_changed_node,
                                                 bounds_update_view,
@@ -387,33 +396,33 @@ void load_balanced_bounds_presolve_t<i_t, f_t>::create_bounds_update_graph()
                                                 warp_vars_offsets,
                                                 warp_vars_id_offsets,
                                                 pb->vars_bin_offsets);
-  RAFT_CUDA_TRY(cudaGetLastError());
-  cudaGraphInstantiate(&upd_bnd_exec, upd_graph, NULL, NULL, 0);
-  RAFT_CUDA_TRY(cudaGetLastError());
+  RAFT_CUDA_TRY(hipGetLastError());
+  hipGraphInstantiate(&upd_bnd_exec, upd_graph, NULL, NULL, 0);
+  RAFT_CUDA_TRY(hipGetLastError());
 }
 
 template <typename i_t, typename f_t>
 void load_balanced_bounds_presolve_t<i_t, f_t>::create_constraint_slack_graph(bool erase_inf_cnst)
 {
   using f_t2 = typename type_2<f_t>::type;
-  cudaGraph_t cnst_slack_graph;
-  cudaGraphCreate(&cnst_slack_graph, 0);
+  hipGraph_t cnst_slack_graph;
+  hipGraphCreate(&cnst_slack_graph, 0);
 
-  cudaGraphNode_t set_bounds_changed_node;
+  hipGraphNode_t set_bounds_changed_node;
   {
     // TODO : Investigate why memset node is not captured manually
     i_t* bounds_changed_ptr = bounds_changed.data();
 
-    cudaMemcpy3DParms memcpyParams = {0};
+    hipMemcpy3DParms memcpyParams = {0};
     memcpyParams.srcArray          = NULL;
-    memcpyParams.srcPos            = make_cudaPos(0, 0, 0);
-    memcpyParams.srcPtr            = make_cudaPitchedPtr(&h_bounds_changed, sizeof(i_t), 1, 1);
+    memcpyParams.srcPos            = make_hipPos(0, 0, 0);
+    memcpyParams.srcPtr            = make_hipPitchedPtr(&h_bounds_changed, sizeof(i_t), 1, 1);
     memcpyParams.dstArray          = NULL;
-    memcpyParams.dstPos            = make_cudaPos(0, 0, 0);
-    memcpyParams.dstPtr            = make_cudaPitchedPtr(bounds_changed_ptr, sizeof(i_t), 1, 1);
-    memcpyParams.extent            = make_cudaExtent(sizeof(i_t), 1, 1);
-    memcpyParams.kind              = cudaMemcpyHostToDevice;
-    cudaGraphAddMemcpyNode(&set_bounds_changed_node, cnst_slack_graph, NULL, 0, &memcpyParams);
+    memcpyParams.dstPos            = make_hipPos(0, 0, 0);
+    memcpyParams.dstPtr            = make_hipPitchedPtr(bounds_changed_ptr, sizeof(i_t), 1, 1);
+    memcpyParams.extent            = make_hipExtent(sizeof(i_t), 1, 1);
+    memcpyParams.kind              = hipMemcpyHostToDevice;
+    hipGraphAddMemcpyNode(&set_bounds_changed_node, cnst_slack_graph, NULL, 0, &memcpyParams);
   }
 
   auto activity_view = get_activity_view(*pb);
@@ -445,9 +454,9 @@ void load_balanced_bounds_presolve_t<i_t, f_t>::create_constraint_slack_graph(bo
                                            pb->cnst_bin_offsets,
                                            erase_inf_cnst);
   if (erase_inf_cnst) {
-    cudaGraphInstantiate(&calc_slack_erase_inf_cnst_exec, cnst_slack_graph, NULL, NULL, 0);
+    hipGraphInstantiate(&calc_slack_erase_inf_cnst_exec, cnst_slack_graph, NULL, NULL, 0);
   } else {
-    cudaGraphInstantiate(&calc_slack_exec, cnst_slack_graph, NULL, NULL, 0);
+    hipGraphInstantiate(&calc_slack_exec, cnst_slack_graph, NULL, NULL, 0);
   }
 }
 
@@ -490,7 +499,7 @@ void load_balanced_bounds_presolve_t<i_t, f_t>::calculate_constraint_slack_iter(
     // writes nans to constraint activities that are infeasible
     //-> less expensive checks for update bounds step
     raft::common::nvtx::range scope("act_cuda_task_graph");
-    cudaGraphLaunch(calc_slack_erase_inf_cnst_exec, handle_ptr->get_stream());
+    hipGraphLaunch(calc_slack_erase_inf_cnst_exec, handle_ptr->get_stream());
   }
   infeas_cnst_slack_set_to_nan = true;
   RAFT_CHECK_CUDA(handle_ptr->get_stream());
@@ -504,7 +513,7 @@ void load_balanced_bounds_presolve_t<i_t, f_t>::calculate_constraint_slack(
   h_bounds_changed = 0;
   {
     raft::common::nvtx::range scope("act_cuda_task_graph");
-    cudaGraphLaunch(calc_slack_exec, handle_ptr->get_stream());
+    hipGraphLaunch(calc_slack_exec, handle_ptr->get_stream());
   }
   infeas_cnst_slack_set_to_nan = false;
   RAFT_CHECK_CUDA(handle_ptr->get_stream());
@@ -517,7 +526,7 @@ bool load_balanced_bounds_presolve_t<i_t, f_t>::update_bounds_from_slack(
   // bounds_changed is copied to h_bounds_changed in upd_bnd_exec
   {
     raft::common::nvtx::range scope("upd_cuda_task_graph");
-    cudaGraphLaunch(upd_bnd_exec, handle_ptr->get_stream());
+    hipGraphLaunch(upd_bnd_exec, handle_ptr->get_stream());
   }
   RAFT_CHECK_CUDA(handle_ptr->get_stream());
   constexpr i_t zero = 0;

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -20,9 +21,29 @@
 #include <raft/util/cuda_utils.cuh>
 #include <raft/util/cudart_utils.hpp>
 
+#include <hipcub/hipcub.hpp>
+#include <thrust/tuple.h>
+
 #include <limits>
 
 namespace cuopt::linear_programming::detail {
+
+#ifdef __HIP_PLATFORM_AMD__
+// ROCm: Helper functor for subtraction that accepts tuples (rocprim compatibility)
+// Defined at namespace scope because local classes cannot have template members
+struct sub_op_tuple {
+  template <typename T1, typename T2>
+  HDI auto operator()(const thrust::tuple<T1, T2>& input) const {
+    return thrust::get<0>(input) - thrust::get<1>(input);
+  }
+  
+  // Overload for rocprim which may pass an index as second argument
+  template <typename T1, typename T2, typename IndexType>
+  HDI auto operator()(const thrust::tuple<T1, T2>& input, IndexType idx) const {
+    return thrust::get<0>(input) - thrust::get<1>(input);
+  }
+};
+#endif
 
 constexpr int parallel_stream_computation = 2;
 
@@ -33,9 +54,9 @@ adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
   rmm::device_scalar<f_t>* step_size,
   bool is_batch_mode)
   : stream_pool_(parallel_stream_computation),
-    dot_delta_X_(cudaEventDisableTiming),
-    dot_delta_Y_(cudaEventDisableTiming),
-    deltas_are_done_(cudaEventDisableTiming),
+    dot_delta_X_(hipEventDisableTiming),
+    dot_delta_Y_(hipEventDisableTiming),
+    deltas_are_done_(hipEventDisableTiming),
     handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
     primal_weight_(primal_weight),
@@ -54,29 +75,29 @@ adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
 
 void set_adaptive_step_size_hyper_parameters(rmm::cuda_stream_view stream_view)
 {
-  RAFT_CUDA_TRY(cudaMemcpyToSymbolAsync(pdlp_hyper_params::default_reduction_exponent,
+  RAFT_CUDA_TRY(hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::default_reduction_exponent),
                                         &pdlp_hyper_params::host_default_reduction_exponent,
                                         sizeof(double),
                                         0,
-                                        cudaMemcpyHostToDevice,
+                                        hipMemcpyHostToDevice,
                                         stream_view));
-  RAFT_CUDA_TRY(cudaMemcpyToSymbolAsync(pdlp_hyper_params::default_growth_exponent,
+  RAFT_CUDA_TRY(hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::default_growth_exponent),
                                         &pdlp_hyper_params::host_default_growth_exponent,
                                         sizeof(double),
                                         0,
-                                        cudaMemcpyHostToDevice,
+                                        hipMemcpyHostToDevice,
                                         stream_view));
-  RAFT_CUDA_TRY(cudaMemcpyToSymbolAsync(pdlp_hyper_params::primal_distance_smoothing,
+  RAFT_CUDA_TRY(hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::primal_distance_smoothing),
                                         &pdlp_hyper_params::host_primal_distance_smoothing,
                                         sizeof(double),
                                         0,
-                                        cudaMemcpyHostToDevice,
+                                        hipMemcpyHostToDevice,
                                         stream_view));
-  RAFT_CUDA_TRY(cudaMemcpyToSymbolAsync(pdlp_hyper_params::dual_distance_smoothing,
+  RAFT_CUDA_TRY(hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::dual_distance_smoothing),
                                         &pdlp_hyper_params::host_dual_distance_smoothing,
                                         sizeof(double),
                                         0,
-                                        cudaMemcpyHostToDevice,
+                                        hipMemcpyHostToDevice,
                                         stream_view));
 }
 
@@ -235,7 +256,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
   }
   graph.launch(total_pdlp_iterations);
   // Steam sync so that next call can see modification made to host var valid_step_size
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 }
 
 template <typename i_t, typename f_t>
@@ -287,24 +308,36 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   // First compute Ay' to be reused as Ay in next PDHG iteration (if found step size if valid)
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                        reusable_device_scalar_value_1_.data(),  // alpha
                                        cusparse_view.A_T,
                                        cusparse_view.potential_next_dual_solution,
                                        reusable_device_scalar_value_0_.data(),  // beta
                                        cusparse_view.next_AtY,
-                                       CUSPARSE_SPMV_CSR_ALG2,
+                                       HIPSPARSE_SPMV_CSR_ALG2,
                                        (f_t*)cusparse_view.buffer_transpose.data(),
                                        stream_view_));
 
   // Compute Ay' - Ay = next_Aty - current_Aty
-  cub::DeviceTransform::Transform(
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm: Use sub_op_tuple wrapper (defined at namespace scope)
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(current_saddle_point_state.get_next_AtY().data(),
+                                                   current_saddle_point_state.get_current_AtY().data())),
+    tmp_primal.data(),
+    current_saddle_point_state.get_primal_size(),
+    sub_op_tuple(),
+    stream_view_.value()));
+#else
+  // CUDA: Use raft::sub_op directly with cuda::std::make_tuple
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
     cuda::std::make_tuple(current_saddle_point_state.get_next_AtY().data(),
                           current_saddle_point_state.get_current_AtY().data()),
     tmp_primal.data(),
     current_saddle_point_state.get_primal_size(),
     raft::sub_op(),
-    stream_view_.value());
+    stream_view_.value()));
+#endif
 
   // compute interaction (x'-x) . (A(y'-y))
   RAFT_CUBLAS_TRY(
@@ -374,7 +407,7 @@ void adaptive_step_size_strategy_t<i_t, f_t>::get_primal_and_dual_stepsizes(
 {
   compute_actual_stepsizes<i_t, f_t>
     <<<1, 1, 0, stream_view_>>>(this->view(), primal_step_size.data(), dual_step_size.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 }
 
 template <typename i_t, typename f_t>

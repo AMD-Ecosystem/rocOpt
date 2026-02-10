@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#pragma once
+
+#define CUOPT_VERSION_MAJOR @VERSION_MAJOR@
+#define CUOPT_VERSION_MINOR @VERSION_MINOR@
+#define CUOPT_VERSION_PATCH @VERSION_PATCH@
+
+#define CUOPT_VERSION "@VERSION_MAJOR@.@VERSION_MINOR@.@VERSION_PATCH@"

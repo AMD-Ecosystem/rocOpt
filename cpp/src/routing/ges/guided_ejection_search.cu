@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -25,13 +26,18 @@
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hipcub/block/block_reduce.hpp>
+#include <hipcub/block/block_scan.hpp>
+#else
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
+#endif
 
 #include <thrust/copy.h>
 #include <thrust/iterator/constant_iterator.h>
 
-#include <cuda_profiler_api.h>
+#include <hip/hip_runtime_api.h>
 
 #include <omp.h>
 
@@ -139,11 +145,11 @@ bool guided_ejection_search_t<i_t, f_t, REQUEST>::time_stop_condition_reached()
   }
   // static bool profiler_started = false;
   // if (seconds_elapsed > 180.f && !profiler_started && seconds_elapsed < 209.f) {
-  //   cudaProfilerStart();
+  //   hipProfilerStart();
   //   profiler_started = true;
   // }
   // if (seconds_elapsed > 210.f && profiler_started) {
-  //   cudaProfilerStop();
+  //   hipProfilerStop();
   //   profiler_started = false;
   // }
 

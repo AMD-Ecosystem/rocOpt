@@ -23,7 +23,23 @@
 
 namespace cuopt::linear_programming::dual_simplex {
 
+#ifdef __HIP_PLATFORM_AMD__
+// HIP doesn't have CUDART_VERSION, disable CUDA 12.4+ specific features
+// RAFT may define this as 1 incorrectly for HIP, so undefine first
+#ifdef CUDA_VER_12_4_UP
+#undef CUDA_VER_12_4_UP
+#endif
+#define CUDA_VER_12_4_UP 0
+#elif !defined(CUDA_VER_12_4_UP)
 #define CUDA_VER_12_4_UP (CUDART_VERSION >= 12040)
+#endif
+
+// Macro for cusparse calls in destructors (no throw)
+#define CUOPT_CUSPARSE_TRY_NO_THROW(call)   \
+  do {                                       \
+    hipsparseStatus_t const status = (call); \
+    (void)status;                            \
+  } while (0)
 
 #if CUDA_VER_12_4_UP
 struct dynamic_load_runtime {
@@ -50,7 +66,7 @@ struct dynamic_load_runtime {
   }
 
   template <typename... Args>
-  using function_sig = std::add_pointer_t<cusparseStatus_t(Args...)>;
+  using function_sig = std::add_pointer_t<hipsparseStatus_t(Args...)>;
 
   template <typename signature>
   static std::optional<signature> function(const char* func_name)
@@ -66,37 +82,37 @@ struct dynamic_load_runtime {
 template <typename... Args>
 using cusparse_sig = dynamic_load_runtime::function_sig<Args...>;
 
-using cusparseSpMV_preprocess_sig = cusparse_sig<cusparseHandle_t,
-                                                 cusparseOperation_t,
+using cusparseSpMV_preprocess_sig = cusparse_sig<hipsparseHandle_t,
+                                                 hipsparseOperation_t,
                                                  const void*,
-                                                 cusparseConstSpMatDescr_t,
-                                                 cusparseConstDnVecDescr_t,
+                                                 hipsparseConstSpMatDescr_t,
+                                                 hipsparseConstDnVecDescr_t,
                                                  const void*,
-                                                 cusparseDnVecDescr_t,
-                                                 cudaDataType,
-                                                 cusparseSpMVAlg_t,
+                                                 hipsparseDnVecDescr_t,
+                                                 hipDataType,
+                                                 hipsparseSpMVAlg_t,
                                                  void*>;
 
 // This is tmp until it's added to raft
 template <
   typename T,
   typename std::enable_if_t<std::is_same_v<T, float> || std::is_same_v<T, double>>* = nullptr>
-void my_cusparsespmv_preprocess(cusparseHandle_t handle,
-                                cusparseOperation_t opA,
+void my_cusparsespmv_preprocess(hipsparseHandle_t handle,
+                                hipsparseOperation_t opA,
                                 const T* alpha,
-                                cusparseConstSpMatDescr_t matA,
-                                cusparseConstDnVecDescr_t vecX,
+                                hipsparseConstSpMatDescr_t matA,
+                                hipsparseConstDnVecDescr_t vecX,
                                 const T* beta,
-                                cusparseDnVecDescr_t vecY,
-                                cusparseSpMVAlg_t alg,
+                                hipsparseDnVecDescr_t vecY,
+                                hipsparseSpMVAlg_t alg,
                                 void* externalBuffer,
-                                cudaStream_t stream)
+                                hipStream_t stream)
 {
   auto constexpr float_type = []() constexpr {
     if constexpr (std::is_same_v<T, float>) {
-      return CUDA_R_32F;
+      return HIP_R_32F;
     } else if constexpr (std::is_same_v<T, double>) {
-      return CUDA_R_64F;
+      return HIP_R_64F;
     }
   }();
 
@@ -104,23 +120,29 @@ void my_cusparsespmv_preprocess(cusparseHandle_t handle,
   // Since cusparse is only available post >= 12.4 we need to use dlsym to make sure the symbol is
   // present at runtime
   static const auto func =
-    dynamic_load_runtime::function<cusparseSpMV_preprocess_sig>("cusparseSpMV_preprocess");
+    dynamic_load_runtime::function<cusparseSpMV_preprocess_sig>("hipsparseSpMV_preprocess");
   if (func.has_value()) {
-    RAFT_CUSPARSE_TRY(cusparseSetStream(handle, stream));
+    RAFT_CUSPARSE_TRY(hipsparseSetStream(handle, stream));
     RAFT_CUSPARSE_TRY(
       (*func)(handle, opA, alpha, matA, vecX, beta, vecY, float_type, alg, externalBuffer));
   }
 }
 #endif
 
-static cusparseSpMVAlg_t get_spmv_alg(int num_rows)
+static hipsparseSpMVAlg_t get_spmv_alg(int num_rows)
 {
+#ifdef __HIP_PLATFORM_AMD__
+  // hipSPARSE doesn't have the single-row bug, use ALG2 always
+  (void)num_rows;
+  return HIPSPARSE_SPMV_CSR_ALG2;
+#else
   // The older version of ALG2 has a bug with single row matrices
   if (num_rows == 1 &&
       (CUSPARSE_VER_MAJOR * 1000 + CUSPARSE_VER_MINOR * 100 + CUSPARSE_VER_PATCH < 12603)) {
-    return CUSPARSE_SPMV_CSR_ALG1;
+    return HIPSPARSE_SPMV_CSR_ALG1;
   }
-  return CUSPARSE_SPMV_CSR_ALG2;
+  return HIPSPARSE_SPMV_CSR_ALG2;
+#endif
 }
 
 template <typename i_t, typename f_t>
@@ -139,9 +161,9 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
     d_zero_(f_t(0), handle_ptr->get_stream())
 {
   RAFT_CUBLAS_TRY(raft::linalg::detail::cublassetpointermode(
-    handle_ptr->get_cublas_handle(), CUBLAS_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr->get_cublas_handle(), HIPBLAS_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsesetpointermode(
-    handle_ptr->get_cusparse_handle(), CUSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr->get_cusparse_handle(), HIPSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
   // TMP matrix data should already be on the GPU
   constexpr bool debug = false;
   if (debug) { printf("A hash: %zu\n", A.hash()); }
@@ -162,33 +184,33 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
   A_T_indices_ = device_copy(A.i, handle_ptr->get_stream());
   A_T_data_    = device_copy(A.x, handle_ptr->get_stream());
 
-  cusparseCreateCsr(&A_,
+  hipsparseCreateCsr(&A_,
                     rows,
                     cols,
                     nnz,
                     A_offsets_.data(),
                     A_indices_.data(),
                     A_data_.data(),
-                    CUSPARSE_INDEX_32I,
-                    CUSPARSE_INDEX_32I,
-                    CUSPARSE_INDEX_BASE_ZERO,
-                    CUDA_R_64F);
+                    HIPSPARSE_INDEX_32I,
+                    HIPSPARSE_INDEX_32I,
+                    HIPSPARSE_INDEX_BASE_ZERO,
+                    HIP_R_64F);
 
-  cusparseCreateCsr(&A_T_,
+  hipsparseCreateCsr(&A_T_,
                     cols,
                     rows,
                     nnz,
                     A_T_offsets_.data(),
                     A_T_indices_.data(),
                     A_T_data_.data(),
-                    CUSPARSE_INDEX_32I,
-                    CUSPARSE_INDEX_32I,
-                    CUSPARSE_INDEX_BASE_ZERO,
-                    CUDA_R_64F);
+                    HIPSPARSE_INDEX_32I,
+                    HIPSPARSE_INDEX_32I,
+                    HIPSPARSE_INDEX_BASE_ZERO,
+                    HIP_R_64F);
 
   // Tmp just to init the buffer size and preprocess
-  cusparseDnVecDescr_t x;
-  cusparseDnVecDescr_t y;
+  hipsparseDnVecDescr_t x;
+  hipsparseDnVecDescr_t y;
   rmm::device_uvector<f_t> d_x(cols, handle_ptr_->get_stream());
   rmm::device_uvector<f_t> d_y(rows, handle_ptr_->get_stream());
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(&x, d_x.size(), d_x.data()));
@@ -197,7 +219,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
   size_t buffer_size_spmv = 0;
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv_buffersize(handle_ptr_->get_cusparse_handle(),
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                  HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                   d_one_.data(),
                                                   A_,
                                                   x,
@@ -208,8 +230,9 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
                                                   handle_ptr_->get_stream()));
   spmv_buffer_.resize(buffer_size_spmv, handle_ptr_->get_stream());
 
+#if CUDA_VER_12_4_UP
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
-                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             HIPSPARSE_OPERATION_NON_TRANSPOSE,
                              d_one_.data(),
                              A_,
                              x,
@@ -218,10 +241,11 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
                              get_spmv_alg(A_offsets_.size() - 1),
                              spmv_buffer_.data(),
                              handle_ptr->get_stream());
+#endif
 
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv_buffersize(handle_ptr_->get_cusparse_handle(),
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                  HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                   d_one_.data(),
                                                   A_T_,
                                                   y,
@@ -232,8 +256,9 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
                                                   handle_ptr_->get_stream()));
   spmv_buffer_transpose_.resize(buffer_size_spmv, handle_ptr_->get_stream());
 
+#if CUDA_VER_12_4_UP
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
-                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             HIPSPARSE_OPERATION_NON_TRANSPOSE,
                              d_one_.data(),
                              A_T_,
                              y,
@@ -242,15 +267,16 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
                              get_spmv_alg(A_T_offsets_.size() - 1),
                              spmv_buffer_transpose_.data(),
                              handle_ptr->get_stream());
-  RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(x));
-  RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(y));
+#endif
+  RAFT_CUSPARSE_TRY(hipsparseDestroyDnVec(x));
+  RAFT_CUSPARSE_TRY(hipsparseDestroyDnVec(y));
 }
 
 template <typename i_t, typename f_t>
 cusparse_view_t<i_t, f_t>::~cusparse_view_t()
 {
-  CUOPT_CUSPARSE_TRY_NO_THROW(cusparseDestroySpMat(A_));
-  CUOPT_CUSPARSE_TRY_NO_THROW(cusparseDestroySpMat(A_T_));
+  CUOPT_CUSPARSE_TRY_NO_THROW(hipsparseDestroySpMat(A_));
+  CUOPT_CUSPARSE_TRY_NO_THROW(hipsparseDestroySpMat(A_T_));
 }
 
 template <typename i_t, typename f_t>
@@ -303,7 +329,7 @@ void cusparse_view_t<i_t, f_t>::spmv(f_t alpha,
   else if (beta == f_t(-1))
     d_beta = &d_minus_one_;
   raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                     CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                     HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                      (alpha == 1) ? d_one_.data() : d_minus_one_.data(),
                                      A_,
                                      x,
@@ -356,7 +382,7 @@ void cusparse_view_t<i_t, f_t>::transpose_spmv(
   else if (beta == f_t(-1))
     d_beta = &d_minus_one_;
   raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                     CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                     HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                      (alpha == 1) ? d_one_.data() : d_minus_one_.data(),
                                      A_T_,
                                      x,

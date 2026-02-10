@@ -9,7 +9,7 @@
 
 #include <mip/problem/problem.cuh>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 #include <rmm/device_uvector.hpp>
 
@@ -26,7 +26,7 @@ void sort_csr(optimization_problem_t<i_t, f_t>& op_problem)
   size_t tmp_storage_bytes{0};
   auto num_segments = op_problem.get_n_constraints();
   auto num_items    = op_problem.get_nnz();
-  cub::DeviceSegmentedSort::SortPairs(static_cast<void*>(nullptr),
+  RAFT_CUDA_TRY(hipcub::DeviceSegmentedSort::SortPairs(static_cast<void*>(nullptr),
                                       tmp_storage_bytes,
                                       op_problem.get_constraint_matrix_indices().data(),
                                       op_problem.get_constraint_matrix_indices().data(),
@@ -36,9 +36,9 @@ void sort_csr(optimization_problem_t<i_t, f_t>& op_problem)
                                       num_segments,
                                       op_problem.get_constraint_matrix_offsets().data(),
                                       op_problem.get_constraint_matrix_offsets().data() + 1,
-                                      stream_view);
+                                      stream_view));
   d_tmp_storage_bytes.resize(tmp_storage_bytes, stream_view);
-  cub::DeviceSegmentedSort::SortPairs(d_tmp_storage_bytes.data(),
+  RAFT_CUDA_TRY(hipcub::DeviceSegmentedSort::SortPairs(d_tmp_storage_bytes.data(),
                                       tmp_storage_bytes,
                                       op_problem.get_constraint_matrix_indices().data(),
                                       op_problem.get_constraint_matrix_indices().data(),
@@ -48,7 +48,7 @@ void sort_csr(optimization_problem_t<i_t, f_t>& op_problem)
                                       num_segments,
                                       op_problem.get_constraint_matrix_offsets().data(),
                                       op_problem.get_constraint_matrix_offsets().data() + 1,
-                                      stream_view);
+                                      stream_view));
   RAFT_CHECK_CUDA(stream_view);
 }
 

@@ -25,11 +25,11 @@ struct PinnedHostAllocator {
   T* allocate(std::size_t n)
   {
     T* ptr = nullptr;
-    RAFT_CUDA_TRY(cudaMallocHost((void**)&ptr, n * sizeof(T)));
+    RAFT_CUDA_TRY(hipHostMalloc((void**)&ptr, n * sizeof(T)));
     return ptr;
   }
 
-  void deallocate(T* p, std::size_t) { RAFT_CUDA_TRY(cudaFreeHost(p)); }
+  void deallocate(T* p, std::size_t) { RAFT_CUDA_TRY(hipHostFree(p)); }
 };
 
 template <typename T, typename U>

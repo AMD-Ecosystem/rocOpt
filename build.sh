@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: ROCm port modifications (c) 2026
 # SPDX-License-Identifier: Apache-2.0
-
 
 set -e
 
@@ -15,7 +15,20 @@ REPODIR=$(cd "$(dirname "$0")"; pwd)
 LIBCUOPT_BUILD_DIR=${LIBCUOPT_BUILD_DIR:=${REPODIR}/cpp/build}
 LIBMPS_PARSER_BUILD_DIR=${LIBMPS_PARSER_BUILD_DIR:=${REPODIR}/cpp/libmps_parser/build}
 
-VALIDARGS="clean libcuopt libmps_parser cuopt_mps_parser cuopt cuopt_server cuopt_sh_client docs deb -a -b -g -fsanitize -tsan -msan -v -l= --verbose-pdlp --build-lp-only  --no-fetch-rapids --skip-c-python-adapters --skip-tests-build --skip-routing-build --skip-fatbin-write --host-lineinfo [--cmake-args=\\\"<args>\\\"] [--cache-tool=<tool>] -n --allgpuarch --ci-only-arch --show_depr_warn -h --help"
+# Detect platform: CUDA or ROCm
+USE_ROCM=1
+if command -v nvcc &> /dev/null; then
+    USE_ROCM=0
+    echo "Detected NVIDIA CUDA platform"
+elif command -v hipcc &> /dev/null; then
+    USE_ROCM=1
+    echo "Detected AMD ROCm platform"
+else
+    echo "Warning: Neither CUDA nor ROCm detected. Defaulting to ROCm."
+    USE_ROCM=1
+fi
+
+VALIDARGS="clean libcuopt libmps_parser cuopt_mps_parser cuopt cuopt_server cuopt_sh_client docs deb -a -b -g -fsanitize -tsan -msan -v -l= --verbose-pdlp --build-lp-only  --no-fetch-rapids --skip-c-python-adapters --skip-tests-build --skip-routing-build --skip-fatbin-write --host-lineinfo --use-cuda --use-rocm [--cmake-args=\\\"<args>\\\"] [--cache-tool=<tool>] -n --allgpuarch --ci-only-arch --show_depr_warn -h --help"
 HELP="$0 [<target> ...] [<flag> ...]
  where <target> is:
    clean            - remove all existing build artifacts and configuration (start over)
@@ -36,20 +49,22 @@ HELP="$0 [<target> ...] [<flag> ...]
    -tsan            - Build with ThreadSanitizer (cannot be used with -fsanitize or -msan)
    -msan            - Build with MemorySanitizer (cannot be used with -fsanitize or -tsan)
    -n               - no install step
-   --no-fetch-rapids  - don't fetch rapids dependencies
+   --use-cuda       - Force CUDA build (even if ROCm is detected)
+   --use-rocm       - Force ROCm build (even if CUDA is detected)
+   --no-fetch-rapids  - don't fetch rapids dependencies (CUDA only)
    -l=              - log level. Options are: TRACE | DEBUG | INFO | WARN | ERROR | CRITICAL | OFF. Default=INFO
    --verbose-pdlp   - verbose mode for pdlp solver
    --build-lp-only  - build only linear programming components, excluding routing package and MIP-specific files
    --skip-c-python-adapters - skip building C and Python adapter files (cython_solve.cu and cuopt_c.cpp)
    --skip-tests-build  - disable building of all tests
    --skip-routing-build - skip building routing components
-   --skip-fatbin-write      - skip the fatbin write
+   --skip-fatbin-write      - skip the fatbin write (CUDA only)
    --host-lineinfo           - build with debug line information for host code
    --cache-tool=<tool> - pass the build cache tool (eg: ccache, sccache, distcc) that will be used
                       to speedup the build process.
    --cmake-args=\\\"<args>\\\"   - pass arbitrary list of CMake configuration options (escape all quotes in argument)
    --allgpuarch     - build for all supported GPU architectures
-   --ci-only-arch   - build for volta and ampere only
+   --ci-only-arch   - build for volta and ampere only (CUDA) or gfx90a/gfx908 (ROCm)
    --show_depr_warn - show cmake deprecation warnings
    -h               - print this text
 
@@ -91,8 +106,6 @@ LOGGING_ACTIVE_LEVEL="INFO"
 FETCH_RAPIDS=ON
 
 # Set defaults for vars that may not have been defined externally
-#  FIXME: if PREFIX is not set, check CONDA_PREFIX, but there is no fallback
-#  from there!
 INSTALL_PREFIX=${PREFIX:=${CONDA_PREFIX}}
 BUILD_ABI=${BUILD_ABI:=ON}
 
@@ -107,21 +120,19 @@ function buildAll {
 }
 
 function cacheTool {
-    # Check for multiple cache options
     if [[ $(echo "$ARGS" | { grep -Eo "\-\-cache\-tool" || true; } | wc -l ) -gt 1 ]]; then
         echo "Multiple --cache-tool options were provided, please provide only one: ${ARGS}"
         exit 1
     fi
-    # Check for cache tool option
     if [[ -n $(echo "$ARGS" | { grep -E "\-\-cache\-tool" || true; } ) ]]; then
-        # There are possible weird edge cases that may cause this regex filter to output nothing and fail silently
-        # the true pipe will catch any weird edge cases that may happen and will cause the program to fall back
-        # on the invalid option error
         CACHE_TOOL=$(echo "$ARGS" | sed -e 's/.*--cache-tool=//' -e 's/ .*//')
         if [[ -n ${CACHE_TOOL} ]]; then
-            # Remove the full CACHE_TOOL argument from list of args so that it passes validArgs function
             ARGS=${ARGS//--cache-tool=$CACHE_TOOL/}
-            CACHE_ARGS=("-DCMAKE_CUDA_COMPILER_LAUNCHER=${CACHE_TOOL}" "-DCMAKE_C_COMPILER_LAUNCHER=${CACHE_TOOL}" "-DCMAKE_CXX_COMPILER_LAUNCHER=${CACHE_TOOL}")
+            if [ ${USE_ROCM} -eq 1 ]; then
+                CACHE_ARGS=("-DCMAKE_HIP_COMPILER_LAUNCHER=${CACHE_TOOL}" "-DCMAKE_C_COMPILER_LAUNCHER=${CACHE_TOOL}" "-DCMAKE_CXX_COMPILER_LAUNCHER=${CACHE_TOOL}")
+            else
+                CACHE_ARGS=("-DCMAKE_CUDA_COMPILER_LAUNCHER=${CACHE_TOOL}" "-DCMAKE_C_COMPILER_LAUNCHER=${CACHE_TOOL}" "-DCMAKE_CXX_COMPILER_LAUNCHER=${CACHE_TOOL}")
+            fi
         fi
     fi
 }
@@ -134,13 +145,10 @@ function loggingArgs {
 
     LOG_LEVEL_LIST=("TRACE" "DEBUG" "INFO" "WARN" "ERROR" "CRITICAL" "OFF")
 
-    # Check for logging option
     if [[ -n $(echo "$ARGS" | { grep -E "\-l=" || true; } ) ]]; then
         LOGGING_ARGS=$(echo "$ARGS" | { grep -Eo "\-l=\S+" || true; })
         if [[ -n ${LOGGING_ARGS} ]]; then
-            # Remove the full log argument from list of args so that it passes validArgs function
             ARGS=${ARGS//$LOGGING_ARGS/}
-            # Filter the full argument down to just the extra string that will be added to cmake call
             LOGGING_ARGS=$(echo "$LOGGING_ARGS" | sed -e 's/^"//' -e 's/"$//' | cut -c4- | grep -Eo "\S+" | tr '[:lower:]' '[:upper:]')
             if [[ "${LOG_LEVEL_LIST[*]}" =~ $LOGGING_ARGS ]]; then
                 LOGGING_ACTIVE_LEVEL=$LOGGING_ARGS
@@ -153,22 +161,15 @@ function loggingArgs {
 }
 
 function cmakeArgs {
-    # Check for multiple cmake args options
     if [[ $(echo "$ARGS" | { grep -Eo "\-\-cmake\-args" || true; } | wc -l ) -gt 1 ]]; then
         echo "Multiple --cmake-args options were provided, please provide only one: ${ARGS}"
         exit 1
     fi
 
-    # Check for cmake args option
     if [[ -n $(echo "$ARGS" | { grep -E "\-\-cmake\-args" || true; } ) ]]; then
-        # There are possible weird edge cases that may cause this regex filter to output nothing and fail silently
-        # the true pipe will catch any weird edge cases that may happen and will cause the program to fall back
-        # on the invalid option error
         EXTRA_CMAKE_ARGS=$(echo "$ARGS" | { grep -Eo "\-\-cmake\-args=\".+\"" || true; })
         if [[ -n ${EXTRA_CMAKE_ARGS} ]]; then
-            # Remove the full  EXTRA_CMAKE_ARGS argument from list of args so that it passes validArgs function
             ARGS=${ARGS//$EXTRA_CMAKE_ARGS/}
-            # Filter the full argument down to just the extra string that will be added to cmake call
             EXTRA_CMAKE_ARGS=$(echo "$EXTRA_CMAKE_ARGS" | grep -Eo "\".+\"" | sed -e 's/^"//' -e 's/"$//')
         fi
     fi
@@ -176,10 +177,20 @@ function cmakeArgs {
     read -ra EXTRA_CMAKE_ARGS <<< "$EXTRA_CMAKE_ARGS"
 }
 
-
 if hasArg -h || hasArg --help; then
     echo "${HELP}"
     exit 0
+fi
+
+# Check for platform override flags
+if hasArg --use-cuda; then
+    USE_ROCM=0
+    echo "Forcing CUDA build"
+fi
+
+if hasArg --use-rocm; then
+    USE_ROCM=1
+    echo "Forcing ROCm build"
 fi
 
 # Check for valid usage
@@ -229,7 +240,7 @@ if hasArg --show_depr_warn; then
 fi
 if hasArg --build-lp-only; then
     BUILD_LP_ONLY=1
-    SKIP_ROUTING_BUILD=1  # Automatically skip routing when building LP-only
+    SKIP_ROUTING_BUILD=1
 fi
 if hasArg -fsanitize; then
     BUILD_SANITIZER=1
@@ -281,10 +292,6 @@ fi
 
 # If clean given, run it prior to any other steps
 if hasArg clean; then
-    # If the dirs to clean are mounted dirs in a container, the
-    # contents should be removed but the mounted dirs will remain.
-    # The find removes all contents but leaves the dirs, the rmdir
-    # attempts to remove the dirs but can fail safely.
     for bd in ${BUILD_DIRS}; do
         if [ -d "${bd}" ]; then
             find "${bd}" -mindepth 1 -delete
@@ -294,7 +301,6 @@ if hasArg clean; then
 
     # Cleaning up python artifacts
     find "${REPODIR}"/python/ | grep -E "(__pycache__|\.pyc|\.pyo|\.so|\_skbuild$)"  | xargs rm -rf
-
 fi
 
 if [ ${BUILD_CI_ONLY} -eq 1 ] && [ ${BUILD_ALL_GPU_ARCH} -eq 1 ]; then
@@ -310,33 +316,58 @@ fi
 
 if [ ${BUILD_SANITIZER} -eq 1 ] && [ ${BUILD_TSAN} -eq 1 ]; then
     echo "ERROR: -fsanitize and -tsan cannot be used together"
-    echo "AddressSanitizer and ThreadSanitizer are mutually exclusive"
     exit 1
 fi
 
 if [ ${BUILD_SANITIZER} -eq 1 ] && [ ${BUILD_MSAN} -eq 1 ]; then
     echo "ERROR: -fsanitize and -msan cannot be used together"
-    echo "AddressSanitizer and MemorySanitizer are mutually exclusive"
     exit 1
 fi
 
 if [ ${BUILD_TSAN} -eq 1 ] && [ ${BUILD_MSAN} -eq 1 ]; then
     echo "ERROR: -tsan and -msan cannot be used together"
-    echo "ThreadSanitizer and MemorySanitizer are mutually exclusive"
     exit 1
 fi
 
-if  [ ${BUILD_ALL_GPU_ARCH} -eq 1 ]; then
-    CUOPT_CMAKE_CUDA_ARCHITECTURES="RAPIDS"
-    echo "Building for *ALL* supported GPU architectures..."
+# Configure GPU architectures
+if [ ${USE_ROCM} -eq 1 ]; then
+    # ROCm GPU architectures
+    if [ ${BUILD_ALL_GPU_ARCH} -eq 1 ]; then
+        CUOPT_CMAKE_GPU_ARCHITECTURES="gfx900;gfx906;gfx908;gfx90a;gfx940;gfx941;gfx942"
+        echo "Building for *ALL* supported AMD GPU architectures..."
+    elif [ ${BUILD_CI_ONLY} -eq 1 ]; then
+        CUOPT_CMAKE_GPU_ARCHITECTURES="gfx90a;gfx908"
+        echo "Building for CI AMD GPU architectures (gfx90a, gfx908)..."
+    else
+        # Detect native AMD GPU
+        if command -v rocminfo &> /dev/null; then
+            DETECTED_ARCH=$(rocminfo | grep "Name:" | grep "gfx" | head -1 | awk '{print $2}')
+            if [ -n "$DETECTED_ARCH" ]; then
+                CUOPT_CMAKE_GPU_ARCHITECTURES="$DETECTED_ARCH"
+                echo "Building for detected AMD GPU architecture: $DETECTED_ARCH"
+            else
+                CUOPT_CMAKE_GPU_ARCHITECTURES="gfx90a"
+                echo "Could not detect AMD GPU, defaulting to gfx90a"
+            fi
+        else
+            CUOPT_CMAKE_GPU_ARCHITECTURES="gfx90a"
+            echo "rocminfo not found, defaulting to gfx90a"
+        fi
+    fi
+    ARCH_CMAKE_VAR="CMAKE_HIP_ARCHITECTURES"
 else
-    if [ ${BUILD_CI_ONLY} -eq 1 ]; then
-        CUOPT_CMAKE_CUDA_ARCHITECTURES="RAPIDS"
+    # CUDA GPU architectures
+    if  [ ${BUILD_ALL_GPU_ARCH} -eq 1 ]; then
+        CUOPT_CMAKE_GPU_ARCHITECTURES="RAPIDS"
+        echo "Building for *ALL* supported NVIDIA GPU architectures..."
+    elif [ ${BUILD_CI_ONLY} -eq 1 ]; then
+        CUOPT_CMAKE_GPU_ARCHITECTURES="RAPIDS"
         echo "Building for RAPIDS supported architectures..."
     else
-        CUOPT_CMAKE_CUDA_ARCHITECTURES="NATIVE"
-        echo "Building for the architecture of the GPU in the system..."
+        CUOPT_CMAKE_GPU_ARCHITECTURES="NATIVE"
+        echo "Building for the architecture of the NVIDIA GPU in the system..."
     fi
+    ARCH_CMAKE_VAR="CMAKE_CUDA_ARCHITECTURES"
 fi
 
 ################################################################################
@@ -346,6 +377,7 @@ if buildAll || hasArg libmps_parser; then
     cd "${LIBMPS_PARSER_BUILD_DIR}"
     cmake -DDEFINE_ASSERT=${DEFINE_ASSERT} \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
+          -DUSE_ROCM=${USE_ROCM} \
           "${CACHE_ARGS[@]}" \
           "${REPODIR}"/cpp/libmps_parser/
 
@@ -361,14 +393,24 @@ fi
 if buildAll || hasArg libcuopt; then
     mkdir -p "${LIBCUOPT_BUILD_DIR}"
     cd "${LIBCUOPT_BUILD_DIR}"
+    
+    # The main CMakeLists.txt now supports both CUDA and ROCm via USE_ROCM flag
+    if [ ${USE_ROCM} -eq 1 ]; then
+        echo "Building for ROCm (USE_ROCM=1)"
+        echo "CMakeLists.txt will use ROCm-DS rapids-cmake and amdclang++"
+    else
+        echo "Building for CUDA (USE_ROCM=0)"
+    fi
+    
     cmake -DDEFINE_ASSERT=${DEFINE_ASSERT} \
           -DDEFINE_BENCHMARK="${DEFINE_BENCHMARK}" \
           -DDEFINE_PDLP_VERBOSE_MODE=${DEFINE_PDLP_VERBOSE_MODE} \
           -DLIBCUOPT_LOGGING_LEVEL="${LOGGING_ACTIVE_LEVEL}" \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
-          -DCMAKE_CUDA_ARCHITECTURES=${CUOPT_CMAKE_CUDA_ARCHITECTURES} \
+          -D${ARCH_CMAKE_VAR}=${CUOPT_CMAKE_GPU_ARCHITECTURES} \
           -DDISABLE_DEPRECATION_WARNING=${BUILD_DISABLE_DEPRECATION_WARNING} \
           -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+          -DUSE_ROCM=${USE_ROCM} \
           -DFETCH_RAPIDS=${FETCH_RAPIDS} \
           -DBUILD_LP_ONLY=${BUILD_LP_ONLY} \
           -DBUILD_SANITIZER=${BUILD_SANITIZER} \
@@ -383,6 +425,7 @@ if buildAll || hasArg libcuopt; then
           "${CACHE_ARGS[@]}" \
           "${EXTRA_CMAKE_ARGS[@]}" \
           "${REPODIR}"/cpp
+          
     if hasArg -n; then
         cmake --build "${LIBCUOPT_BUILD_DIR}" ${VERBOSE_FLAG}
     else
@@ -393,7 +436,6 @@ fi
 ################################################################################
 # Build deb package
 if hasArg deb; then
-    # Check if libcuopt has been built
     if [ ! -d "${LIBCUOPT_BUILD_DIR}" ]; then
         echo "Error: libcuopt must be built before creating deb package. Run with 'libcuopt' target first."
         exit 1
@@ -405,13 +447,11 @@ if hasArg deb; then
     echo "Deb package created in ${LIBCUOPT_BUILD_DIR}"
 fi
 
-
 # Build and install the cuopt Python package
 if buildAll || hasArg cuopt; then
     cd "${REPODIR}"/python/cuopt
 
-    # $EXTRA_CMAKE_ARGS gets concatenated into a string with [*] and then we find/replace spaces with semi-colons
-    SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUOPT_BUILD_DIR};-DCMAKE_CUDA_ARCHITECTURES=${CUOPT_CMAKE_CUDA_ARCHITECTURES};${EXTRA_CMAKE_ARGS[*]// /;}" \
+    SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUOPT_BUILD_DIR};-D${ARCH_CMAKE_VAR}=${CUOPT_CMAKE_GPU_ARCHITECTURES};-DUSE_ROCM=${USE_ROCM};${EXTRA_CMAKE_ARGS[*]// /;}" \
         python "${PYTHON_ARGS_FOR_INSTALL[@]}" .
 fi
 
@@ -419,7 +459,7 @@ fi
 if buildAll || hasArg cuopt_mps_parser; then
     cd "${REPODIR}"/python/cuopt/cuopt/linear_programming
 
-    SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUOPT_BUILD_DIR};-DCMAKE_CUDA_ARCHITECTURES=${CUOPT_CMAKE_CUDA_ARCHITECTURES};${EXTRA_CMAKE_ARGS[*]// /;}" \
+    SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUOPT_BUILD_DIR};-D${ARCH_CMAKE_VAR}=${CUOPT_CMAKE_GPU_ARCHITECTURES};-DUSE_ROCM=${USE_ROCM};${EXTRA_CMAKE_ARGS[*]// /;}" \
         python "${PYTHON_ARGS_FOR_INSTALL[@]}" .
 fi
 
@@ -444,3 +484,21 @@ if buildAll || hasArg docs; then
     make clean
     make html linkcheck
 fi
+
+# Print summary
+echo ""
+echo "========================================"
+if [ ${USE_ROCM} -eq 1 ]; then
+    echo "ROCm Build Complete!"
+    echo "========================================"
+    echo "Platform: AMD ROCm"
+    echo "GPU Architectures: ${CUOPT_CMAKE_GPU_ARCHITECTURES}"
+else
+    echo "CUDA Build Complete!"
+    echo "========================================"
+    echo "Platform: NVIDIA CUDA"
+    echo "GPU Architectures: ${CUOPT_CMAKE_GPU_ARCHITECTURES}"
+fi
+echo "Build Type: ${BUILD_TYPE}"
+echo "Install Prefix: ${INSTALL_PREFIX}"
+echo "========================================"

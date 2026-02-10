@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -21,9 +22,9 @@
 #include <raft/linalg/eltwise.cuh>
 #include <raft/linalg/ternary_op.cuh>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
-#include <cusparse_v2.h>
+#include <hipsparse/hipsparse.h>
 
 namespace cuopt::linear_programming::detail {
 
@@ -108,13 +109,13 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
   // K(x'+delta_x)
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                        reusable_device_scalar_value_1_.data(),  // 1
                                        cusparse_view_.A,
                                        cusparse_view_.tmp_primal,
                                        reusable_device_scalar_value_0_.data(),  // 1
                                        cusparse_view_.dual_gradient,
-                                       CUSPARSE_SPMV_CSR_ALG2,
+                                       HIPSPARSE_SPMV_CSR_ALG2,
                                        (f_t*)cusparse_view_.buffer_non_transpose.data(),
                                        stream_view_));
 
@@ -126,16 +127,16 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
   // positive.
 
   // All is fused in a single call to limit number of read / write in memory
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
                           current_saddle_point_state_.get_dual_gradient().data(),
                           problem_ptr->constraint_lower_bounds.data(),
-                          problem_ptr->constraint_upper_bounds.data()),
-    thrust::make_zip_iterator(potential_next_dual_solution_.data(),
-                              current_saddle_point_state_.get_delta_dual().data()),
+                          problem_ptr->constraint_upper_bounds.data())),
+    thrust::make_zip_iterator(thrust::make_tuple(potential_next_dual_solution_.data(),
+                              current_saddle_point_state_.get_delta_dual().data())),
     dual_size_h_,
     dual_projection<f_t>(dual_step_size.data()),
-    stream_view_.value());
+    stream_view_.value()));
 }
 
 template <typename i_t, typename f_t>
@@ -144,13 +145,13 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
   // A_t @ y
 
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                        reusable_device_scalar_value_1_.data(),
                                                        cusparse_view_.A_T,
                                                        cusparse_view_.dual_solution,
                                                        reusable_device_scalar_value_0_.data(),
                                                        cusparse_view_.current_AtY,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
+                                                       HIPSPARSE_SPMV_CSR_ALG2,
                                                        (f_t*)cusparse_view_.buffer_transpose.data(),
                                                        stream_view_));
 }
@@ -162,13 +163,13 @@ void pdhg_solver_t<i_t, f_t>::compute_A_x()
 
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                        reusable_device_scalar_value_1_.data(),
                                        cusparse_view_.A,
                                        cusparse_view_.reflected_primal_solution,
                                        reusable_device_scalar_value_0_.data(),
                                        cusparse_view_.dual_gradient,
-                                       CUSPARSE_SPMV_CSR_ALG2,
+                                       HIPSPARSE_SPMV_CSR_ALG2,
                                        (f_t*)cusparse_view_.buffer_non_transpose.data(),
                                        stream_view_));
 }
@@ -184,17 +185,17 @@ void pdhg_solver_t<i_t, f_t>::compute_primal_projection_with_gradient(
 
   using f_t2 = typename type_2<f_t>::type;
   // All is fused in a single call to limit number of read / write in memory
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
                           problem_ptr->objective_coefficients.data(),
                           current_saddle_point_state_.get_current_AtY().data(),
-                          problem_ptr->variable_bounds.data()),
-    thrust::make_zip_iterator(potential_next_primal_solution_.data(),
+                          problem_ptr->variable_bounds.data())),
+    thrust::make_zip_iterator(thrust::make_tuple(potential_next_primal_solution_.data(),
                               current_saddle_point_state_.get_delta_primal().data(),
-                              tmp_primal_.data()),
+                              tmp_primal_.data())),
     primal_size_h_,
     primal_projection<f_t, f_t2>(primal_step_size.data()),
-    stream_view_.value());
+    stream_view_.value()));
 }
 
 template <typename i_t, typename f_t>
@@ -259,6 +260,7 @@ template <typename f_t>
 struct primal_reflected_major_projection {
   using f_t2 = typename type_2<f_t>::type;
   primal_reflected_major_projection(const f_t* scalar) : scalar_{scalar} {}
+  
   HDI thrust::tuple<f_t, f_t, f_t> operator()(f_t current_primal,
                                               f_t objective,
                                               f_t Aty,
@@ -270,6 +272,17 @@ struct primal_reflected_major_projection {
     return {
       next_clamped, (next_clamped - next) / *scalar_, f_t(2.0) * next_clamped - current_primal};
   }
+  
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm version: accepts tuple (for rocprim compatibility)
+  HDI thrust::tuple<f_t, f_t, f_t> operator()(
+    const thrust::tuple<f_t, f_t, f_t, f_t2>& input)
+  {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input), 
+                      thrust::get<2>(input), thrust::get<3>(input));
+  }
+#endif
+  
   const f_t* scalar_;
 };
 
@@ -277,18 +290,30 @@ template <typename f_t>
 struct primal_reflected_projection {
   using f_t2 = typename type_2<f_t>::type;
   primal_reflected_projection(const f_t* scalar) : scalar_{scalar} {}
+  
   HDI f_t operator()(f_t current_primal, f_t objective, f_t Aty, f_t2 bounds)
   {
     const f_t next         = current_primal - *scalar_ * (objective - Aty);
     const f_t next_clamped = raft::max<f_t>(raft::min<f_t>(next, bounds.y), bounds.x);
     return f_t(2.0) * next_clamped - current_primal;
   }
+  
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm version: accepts tuple (for rocprim compatibility)
+  HDI f_t operator()(const thrust::tuple<f_t, f_t, f_t, f_t2>& input)
+  {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input), 
+                      thrust::get<2>(input), thrust::get<3>(input));
+  }
+#endif
+  
   const f_t* scalar_;
 };
 
 template <typename f_t>
 struct dual_reflected_major_projection {
   dual_reflected_major_projection(const f_t* scalar) : scalar_{scalar} {}
+  
   HDI thrust::tuple<f_t, f_t> operator()(f_t current_dual,
                                          f_t Ax,
                                          f_t lower_bound,
@@ -301,12 +326,23 @@ struct dual_reflected_major_projection {
     return {next_dual, f_t(2.0) * next_dual - current_dual};
   }
 
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm version: accepts tuple (for rocprim compatibility)
+  HDI thrust::tuple<f_t, f_t> operator()(
+    const thrust::tuple<f_t, f_t, f_t, f_t>& input)
+  {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input), 
+                      thrust::get<2>(input), thrust::get<3>(input));
+  }
+#endif
+
   const f_t* scalar_;
 };
 
 template <typename f_t>
 struct dual_reflected_projection {
   dual_reflected_projection(const f_t* scalar) : scalar_{scalar} {}
+  
   HDI f_t operator()(f_t current_dual, f_t Ax, f_t lower_bound, f_t upper_bounds)
   {
     cuopt_assert(*scalar_ != f_t(0.0), "Scalar can't be 0");
@@ -315,6 +351,15 @@ struct dual_reflected_projection {
     const f_t next_dual = (tmp - tmp_proj) * *scalar_;
     return f_t(2.0) * next_dual - current_dual;
   }
+  
+#ifdef __HIP_PLATFORM_AMD__
+  // ROCm version: accepts tuple (for rocprim compatibility)
+  HDI f_t operator()(const thrust::tuple<f_t, f_t, f_t, f_t>& input)
+  {
+    return operator()(thrust::get<0>(input), thrust::get<1>(input), 
+                      thrust::get<2>(input), thrust::get<3>(input));
+  }
+#endif
 
   const f_t* scalar_;
 };
@@ -334,16 +379,16 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution_reflected(
       graph_all.start_capture(should_major);
 
       compute_At_y();
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
+      RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
                               problem_ptr->objective_coefficients.data(),
                               current_saddle_point_state_.get_current_AtY().data(),
-                              problem_ptr->variable_bounds.data()),
-        thrust::make_zip_iterator(
-          potential_next_primal_solution_.data(), dual_slack_.data(), reflected_primal_.data()),
+                              problem_ptr->variable_bounds.data())),
+        thrust::make_zip_iterator(thrust::make_tuple(
+          potential_next_primal_solution_.data(), dual_slack_.data(), reflected_primal_.data())),
         primal_size_h_,
         primal_reflected_major_projection<f_t>(primal_step_size.data()),
-        stream_view_.value());
+        stream_view_.value()));
 #ifdef CUPDLP_DEBUG_MODE
       print("potential_next_primal_solution_", potential_next_primal_solution_);
       print("reflected_primal_", reflected_primal_);
@@ -353,15 +398,15 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution_reflected(
       // Compute next dual
       compute_A_x();
 
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
+      RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
                               current_saddle_point_state_.get_dual_gradient().data(),
                               problem_ptr->constraint_lower_bounds.data(),
-                              problem_ptr->constraint_upper_bounds.data()),
-        thrust::make_zip_iterator(potential_next_dual_solution_.data(), reflected_dual_.data()),
+                              problem_ptr->constraint_upper_bounds.data())),
+        thrust::make_zip_iterator(thrust::make_tuple(potential_next_dual_solution_.data(), reflected_dual_.data())),
         dual_size_h_,
         dual_reflected_major_projection<f_t>(dual_step_size.data()),
-        stream_view_.value());
+        stream_view_.value()));
 
 #ifdef CUPDLP_DEBUG_MODE
       print("potential_next_dual_solution_", potential_next_dual_solution_);
@@ -378,15 +423,15 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution_reflected(
       // Compute next primal
       compute_At_y();
 
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
+      RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(current_saddle_point_state_.get_primal_solution().data(),
                               problem_ptr->objective_coefficients.data(),
                               current_saddle_point_state_.get_current_AtY().data(),
-                              problem_ptr->variable_bounds.data()),
+                              problem_ptr->variable_bounds.data())),
         reflected_primal_.data(),
         primal_size_h_,
         primal_reflected_projection<f_t>(primal_step_size.data()),
-        stream_view_.value());
+        stream_view_.value()));
 #ifdef CUPDLP_DEBUG_MODE
       print("reflected_primal_", reflected_primal_);
 #endif
@@ -394,15 +439,15 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution_reflected(
       // Compute next dual
       compute_A_x();
 
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
+      RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
                               current_saddle_point_state_.get_dual_gradient().data(),
                               problem_ptr->constraint_lower_bounds.data(),
-                              problem_ptr->constraint_upper_bounds.data()),
+                              problem_ptr->constraint_upper_bounds.data())),
         reflected_dual_.data(),
         dual_size_h_,
         dual_reflected_projection<f_t>(dual_step_size.data()),
-        stream_view_.value());
+        stream_view_.value()));
 #ifdef CUPDLP_DEBUG_MODE
       print("reflected_dual_", reflected_dual_);
 #endif
@@ -456,21 +501,21 @@ void pdhg_solver_t<i_t, f_t>::update_solution(
   std::swap(current_saddle_point_state_.current_AtY_, current_saddle_point_state_.next_AtY_);
 
   // Update cusparse views to point to the new values, cost is marginal
-  RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view_.current_AtY,
+  RAFT_CUSPARSE_TRY(hipsparseDnVecSetValues(cusparse_view_.current_AtY,
                                            current_saddle_point_state_.current_AtY_.data()));
   RAFT_CUSPARSE_TRY(
-    cusparseDnVecSetValues(cusparse_view_.next_AtY, current_saddle_point_state_.next_AtY_.data()));
-  RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view_.potential_next_dual_solution,
+    hipsparseDnVecSetValues(cusparse_view_.next_AtY, current_saddle_point_state_.next_AtY_.data()));
+  RAFT_CUSPARSE_TRY(hipsparseDnVecSetValues(cusparse_view_.potential_next_dual_solution,
                                            potential_next_dual_solution_.data()));
-  RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view_.primal_solution,
+  RAFT_CUSPARSE_TRY(hipsparseDnVecSetValues(cusparse_view_.primal_solution,
                                            current_saddle_point_state_.primal_solution_.data()));
-  RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view_.dual_solution,
+  RAFT_CUSPARSE_TRY(hipsparseDnVecSetValues(cusparse_view_.dual_solution,
                                            current_saddle_point_state_.dual_solution_.data()));
   RAFT_CUSPARSE_TRY(
-    cusparseDnVecSetValues(current_op_problem_evaluation_cusparse_view_.primal_solution,
+    hipsparseDnVecSetValues(current_op_problem_evaluation_cusparse_view_.primal_solution,
                            current_saddle_point_state_.primal_solution_.data()));
   RAFT_CUSPARSE_TRY(
-    cusparseDnVecSetValues(current_op_problem_evaluation_cusparse_view_.dual_solution,
+    hipsparseDnVecSetValues(current_op_problem_evaluation_cusparse_view_.dual_solution,
                            current_saddle_point_state_.dual_solution_.data()));
 }
 

@@ -61,12 +61,12 @@ class routing_ges_test_t : public ::testing::TestWithParam<std::tuple<bool>>,
                           const cuopt::routing::solver_settings_t<i_t, f_t>& solver_settings,
                           i_t expected_route_count)
   {
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
     ges_solver_t<i_t, f_t, REQUEST> solver{
       data_model, solver_settings, this->n_orders / 5.f, expected_route_count};
     this->hr_timer_.start("GES solver");
     auto assignment = solver.compute_ges_solution();
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
     this->hr_timer_.stop();
     this->hr_timer_.display(std::cout);
     return assignment;
@@ -175,7 +175,7 @@ class simple_routes_ges_test_t : public ::testing::TestWithParam<test_data_t<i_t
       data_model, solver_settings, this->n_orders / 5.f, expected_route_count};
     this->hr_timer_.start("GES solver");
     auto routing_solution = solver.compute_ges_solution();
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
     this->hr_timer_.stop();
     this->hr_timer_.display(std::cout);
     return routing_solution;

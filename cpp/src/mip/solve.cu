@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -36,7 +37,7 @@
 #include <raft/common/nvtx.hpp>
 #include <raft/core/handle.hpp>
 
-#include <cuda_profiler_api.h>
+#include <hip/hip_runtime_api.h>
 
 namespace cuopt::linear_programming {
 
@@ -45,9 +46,9 @@ static void init_handler(const raft::handle_t* handle_ptr)
 {
   // Init cuBlas / cuSparse context here to avoid having it during solving time
   RAFT_CUBLAS_TRY(raft::linalg::detail::cublassetpointermode(
-    handle_ptr->get_cublas_handle(), CUBLAS_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr->get_cublas_handle(), HIPBLAS_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsesetpointermode(
-    handle_ptr->get_cusparse_handle(), CUSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr->get_cusparse_handle(), HIPSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
 }
 
 static void setup_device_symbols(rmm::cuda_stream_view stream_view)

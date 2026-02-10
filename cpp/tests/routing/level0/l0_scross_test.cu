@@ -120,7 +120,7 @@ class simple_scross_test_t : public ::testing::TestWithParam<test_data_t<i_t, f_
   void solve(const cuopt::routing::data_model_view_t<i_t, f_t>& data_model,
              i_t expected_route_count)
   {
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
 
     detail::problem_t<i_t, f_t> problem(data_model);
     std::unique_ptr<detail::solution_handle_t<i_t, f_t>> sol_handle =
@@ -136,7 +136,7 @@ class simple_scross_test_t : public ::testing::TestWithParam<test_data_t<i_t, f_
     detail::get_solution_from_assignment(sol_pool_vec[0], simple_assignment, problem);
     ges_solver_t<i_t, f_t, REQUEST> ges_solver(data_model, 1, this->n_orders / 5);
     ges_solver.pool_allocator.solution_pool = std::move(sol_pool_vec);
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
 
     this->hr_timer_.start("PDP scross");
     detail::local_search_t<i_t, f_t, REQUEST>::start_timer(1.f);
@@ -165,7 +165,7 @@ class simple_scross_test_t : public ::testing::TestWithParam<test_data_t<i_t, f_
 
     ges_solver.pool_allocator.resource_pool->release(index);
     ges_solver.pool_allocator.sync_all_streams();
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     this->hr_timer_.stop();
     this->hr_timer_.display(std::cout);
   }

@@ -92,7 +92,7 @@ target_compile_options(mps_parser
   PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPS_PARSER_CXX_FLAGS}>"
 )
 
-if(WRITE_FATBIN)
+if(WRITE_FATBIN AND NOT USE_ROCM)
   file(WRITE "${MPS_PARSER_BINARY_DIR}/fatbin.ld"
     [=[
   SECTIONS

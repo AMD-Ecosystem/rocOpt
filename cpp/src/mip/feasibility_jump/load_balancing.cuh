@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -5,12 +6,17 @@
  */
 /* clang-format on */
 
-#include <cuda_runtime_api.h>
+#include <hip/hip_runtime_api.h>
 
 #include "feasibility_jump_kernels.cuh"
 
-#include <cub/block/block_merge_sort.cuh>
+// Note: block_merge_sort header removed - not actually used in this file
 #include <utilities/cuda_helpers.cuh>
+
+#ifdef __HIP_PLATFORM_AMD__
+// HIP doesn't have __trap() in global scope, use libhipcxx version
+#define __trap() libhipcxx::__trap()
+#endif
 
 DI uint32_t get_unique_warp_id()
 {
@@ -561,9 +567,16 @@ __launch_bounds__(TPB_loadbalance, 16) __global__
           cuopt_assert(isfinite(candidate.score.bonus), "invalid score");
 
           // early exit, atomic load
+#ifdef __HIP_PLATFORM_AMD__
+          // HIP workaround: cuda::atomic_ref::load() on struct types generates
+          // an undefined __atomic_load symbol on amdgcn. A plain load is sufficient
+          // for this early-exit heuristic (the actual update is lock-protected below).
+          auto best_score = fj.jump_move_scores[var_idx];
+#else
           cuda::atomic_ref<typename fj_t<i_t, f_t>::move_score_t, cuda::thread_scope_device>
             best_score_ref{fj.jump_move_scores[var_idx]};
           auto best_score = best_score_ref.load(cuda::memory_order_relaxed);
+#endif
 
           if (best_score < candidate.score ||
               (best_score == candidate.score && candidate.delta < fj.jump_move_delta[var_idx])) {

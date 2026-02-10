@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -43,8 +44,8 @@ struct bitmap_t {
 
   void clear(const rmm::cuda_stream_view& stream)
   {
-    cudaMemsetAsync(
-      validity_bitmap.data(), 0, sizeof(word_t) * validity_bitmap.size(), stream.value());
+    RAFT_CUDA_TRY(hipMemsetAsync(
+      validity_bitmap.data(), 0, sizeof(word_t) * validity_bitmap.size(), stream.value()));
   }
   void clear(const raft::handle_t* handle_ptr)
   {
@@ -114,7 +115,7 @@ struct contiguous_set_t {
     set_size.set_value_to_zero_async(stream);
     // can't use thrust::fill, needs a memset node in order to be recorded in CUDA graphs
     // works bcs (uint8_t)-1 == 0xFF => (repeated 4 times) 0xFFFFFFFF == (uint32_t)-1
-    cudaMemsetAsync(index_map.data(), -1, sizeof(i_t) * index_map.size(), stream.value());
+    RAFT_CUDA_TRY(hipMemsetAsync(index_map.data(), -1, sizeof(i_t) * index_map.size(), stream.value()));
     validity_bitmap.clear(stream);
   }
 

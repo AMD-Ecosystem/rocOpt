@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -9,6 +10,12 @@
 #include "local_search.cuh"
 
 #include <cuda/std/atomic>
+
+#ifdef __HIP_PLATFORM_AMD__
+#include <hipcub/device/device_merge_sort.hpp>
+#else
+#include <cub/device/device_merge_sort.cuh>
+#endif
 
 #include <chrono>
 
@@ -242,7 +249,7 @@ i_t sort_random_moves_by_route_pair_idx(solution_t<i_t, f_t, REQUEST>& sol,
   i_t n_random_moves = random_candidates.n_moves.value(sol.sol_handle->get_stream());
   if (n_random_moves == 0) { return n_random_moves; }
   size_t temp_storage_bytes = 0;
-  cub::DeviceMergeSort::SortKeys(
+  hipcub::DeviceMergeSort::SortKeys(
     static_cast<void*>(nullptr),
     temp_storage_bytes,
     random_candidates.moves_per_route_pair.data(),
@@ -254,7 +261,7 @@ i_t sort_random_moves_by_route_pair_idx(solution_t<i_t, f_t, REQUEST>& sol,
     random_candidates.d_cub_storage_bytes.resize(temp_storage_bytes, sol.sol_handle->get_stream());
   }
   // Run sorting operation
-  cub::DeviceMergeSort::SortKeys(
+  hipcub::DeviceMergeSort::SortKeys(
     random_candidates.d_cub_storage_bytes.data(),
     temp_storage_bytes,
     random_candidates.moves_per_route_pair.data(),

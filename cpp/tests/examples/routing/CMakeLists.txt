@@ -11,15 +11,19 @@ add_executable(service_team_routing service_team_routing.cu)
 add_executable(pdptw_mixed_fleet pdptw_mixed_fleet.cu)
 add_executable(cvrp_daily_deliveries cvrp_daily_deliveries.cu)
 
-# Set CUDA standard for all examples
-set_target_properties(
-  service_team_routing
-  pdptw_mixed_fleet
-  cvrp_daily_deliveries
-  PROPERTIES
-  CUDA_STANDARD 20
-  CUDA_STANDARD_REQUIRED ON
-)
+# Set language standard for all examples
+if(USE_ROCM)
+  foreach(example_src service_team_routing.cu pdptw_mixed_fleet.cu cvrp_daily_deliveries.cu)
+    set_source_files_properties(${example_src} PROPERTIES LANGUAGE HIP)
+  endforeach()
+  set_target_properties(
+    service_team_routing pdptw_mixed_fleet cvrp_daily_deliveries
+    PROPERTIES HIP_STANDARD 20 HIP_STANDARD_REQUIRED ON)
+else()
+  set_target_properties(
+    service_team_routing pdptw_mixed_fleet cvrp_daily_deliveries
+    PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+endif()
 
 # Link libraries for all examples
 foreach(target
@@ -35,7 +39,7 @@ foreach(target
   )
   target_link_libraries(${target}
     PRIVATE
-      cuopt
+      ${LIB_TARGET}
       cuopttestutils
       OpenMP::OpenMP_CXX
   )

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -15,7 +16,7 @@
 #include <raft/random/rng_device.cuh>
 #include <raft/util/cuda_dev_essentials.cuh>
 
-#include <cuda_fp16.h>
+#include <hip/hip_fp16.h>
 #include <thrust/reduce.h>
 #include <thrust/scatter.h>
 #include <thrust/tuple.h>
@@ -49,7 +50,12 @@ struct objective_to_int {
 };
 
 template <typename T, typename i_t = int, typename f_t = float>
+#ifdef __HIP_PLATFORM_AMD__
+// HIP requires 64-bit mask for 64-wide wavefronts
+__device__ inline T shfl(T val, i_t srcLane, i_t width = warp_size, uint64_t mask = 0xffffffffffffffffull)
+#else
 __device__ inline T shfl(T val, i_t srcLane, i_t width = warp_size, uint mask = 0xffffffffu)
+#endif
 {
   return __shfl_sync(mask, val, srcLane, width);
 }
@@ -256,7 +262,7 @@ struct comparator {
   }
 };
 
-// use this to avoid additional register pressure and shared memory usage from cub::blocksort
+// use this to avoid additional register pressure and shared memory usage from hipcub::blocksort
 // TODO fix this to use the whole block rather than just a warp
 template <typename count_t, typename value_t, typename out_t>
 void __device__ inline block_inclusive_scan(out_t* out, value_t const* in, count_t n)

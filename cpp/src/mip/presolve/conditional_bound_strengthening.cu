@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -14,9 +15,9 @@
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
 #include <raft/sparse/linalg/transpose.cuh>
-#include "cusparse.h"
+#include <hipsparse/hipsparse.h>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 #include "conditional_bound_strengthening.cuh"
 
 #include <unordered_set>
@@ -59,9 +60,9 @@ void conditional_bound_strengthening_t<i_t, f_t>::update_constraint_bounds(
   solve(problem);
 }
 
-void check_cusparse_status(cusparseStatus_t status)
+void check_cusparse_status(hipsparseStatus_t status)
 {
-  if (status != CUSPARSE_STATUS_SUCCESS) { throw std::bad_alloc(); }
+  if (status != HIPSPARSE_STATUS_SUCCESS) { throw std::bad_alloc(); }
 }
 
 template <typename i_t, typename f_t>
@@ -77,9 +78,9 @@ void spgemm_cusparse([[maybe_unused]] rmm::device_uvector<i_t>& offsetsA,
 {
 #if CUDART_VERSION >= 12000
   auto stream = offsetsA.stream();
-  cusparseHandle_t handle;
-  cusparseCreate(&handle);
-  cusparseSetStream(handle, stream);
+  hipsparseHandle_t handle;
+  hipsparseCreate(&handle);
+  hipsparseSetStream(handle, stream);
 
   int m    = offsetsA.size() - 1;
   int n    = offsetsB.size() - 1;
@@ -88,56 +89,56 @@ void spgemm_cusparse([[maybe_unused]] rmm::device_uvector<i_t>& offsetsA,
 
   offsetsC.resize(m + 1, stream);
 
-  cusparseSpMatDescr_t matA, matB, matC;
-  cusparseSpGEMMAlg_t alg = CUSPARSE_SPGEMM_ALG1;
+  hipsparseSpMatDescr_t matA, matB, matC;
+  hipsparseSpGEMMAlg_t alg = HIPSPARSE_SPGEMM_ALG1;
   rmm::device_buffer dBuffer1(0, stream), dBuffer2(0, stream), dBuffer3(0, stream);
 
   float alpha              = 1.0f;
   float beta               = 0.0f;
-  cusparseOperation_t opA  = CUSPARSE_OPERATION_NON_TRANSPOSE;
-  cusparseOperation_t opB  = CUSPARSE_OPERATION_NON_TRANSPOSE;
-  cudaDataType computeType = CUDA_R_32F;
+  hipsparseOperation_t opA  = HIPSPARSE_OPERATION_NON_TRANSPOSE;
+  hipsparseOperation_t opB  = HIPSPARSE_OPERATION_NON_TRANSPOSE;
+  hipDataType computeType = HIP_R_32F;
 
-  check_cusparse_status(cusparseCreateCsr(&matA,
+  check_cusparse_status(hipsparseCreateCsr(&matA,
                                           m,
                                           n,
                                           nnzA,
                                           offsetsA.data(),
                                           colsA.data(),
                                           valsA.data(),
-                                          CUSPARSE_INDEX_32I,
-                                          CUSPARSE_INDEX_32I,
-                                          CUSPARSE_INDEX_BASE_ZERO,
-                                          CUDA_R_32F));
-  check_cusparse_status(cusparseCreateCsr(&matB,
+                                          HIPSPARSE_INDEX_32I,
+                                          HIPSPARSE_INDEX_32I,
+                                          HIPSPARSE_INDEX_BASE_ZERO,
+                                          HIP_R_32F));
+  check_cusparse_status(hipsparseCreateCsr(&matB,
                                           n,
                                           m,
                                           nnzB,
                                           offsetsB.data(),
                                           colsB.data(),
                                           valsB.data(),
-                                          CUSPARSE_INDEX_32I,
-                                          CUSPARSE_INDEX_32I,
-                                          CUSPARSE_INDEX_BASE_ZERO,
-                                          CUDA_R_32F));
-  check_cusparse_status(cusparseCreateCsr(&matC,
+                                          HIPSPARSE_INDEX_32I,
+                                          HIPSPARSE_INDEX_32I,
+                                          HIPSPARSE_INDEX_BASE_ZERO,
+                                          HIP_R_32F));
+  check_cusparse_status(hipsparseCreateCsr(&matC,
                                           m,
                                           m,
                                           0,
                                           offsetsC.data(),
                                           NULL,
                                           NULL,
-                                          CUSPARSE_INDEX_32I,
-                                          CUSPARSE_INDEX_32I,
-                                          CUSPARSE_INDEX_BASE_ZERO,
-                                          CUDA_R_32F));
+                                          HIPSPARSE_INDEX_32I,
+                                          HIPSPARSE_INDEX_32I,
+                                          HIPSPARSE_INDEX_BASE_ZERO,
+                                          HIP_R_32F));
 
-  cusparseSpGEMMDescr_t spgemmDesc;
-  cusparseSpGEMM_createDescr(&spgemmDesc);
+  hipsparseSpGEMMDescr_t spgemmDesc;
+  hipsparseSpGEMM_createDescr(&spgemmDesc);
 
   size_t bufferSize1 = 0;
   // ask bufferSize1 bytes for external memory
-  check_cusparse_status(cusparseSpGEMM_workEstimation(handle,
+  check_cusparse_status(hipsparseSpGEMM_workEstimation(handle,
                                                       opA,
                                                       opB,
                                                       &alpha,
@@ -154,7 +155,7 @@ void spgemm_cusparse([[maybe_unused]] rmm::device_uvector<i_t>& offsetsA,
 
   // inspect the matrices A and B to understand the memory requirement for
   // the next step
-  check_cusparse_status(cusparseSpGEMM_workEstimation(handle,
+  check_cusparse_status(hipsparseSpGEMM_workEstimation(handle,
                                                       opA,
                                                       opB,
                                                       &alpha,
@@ -170,7 +171,7 @@ void spgemm_cusparse([[maybe_unused]] rmm::device_uvector<i_t>& offsetsA,
 
   size_t bufferSize2 = 0;
   // ask bufferSize2 bytes for external memory
-  check_cusparse_status(cusparseSpGEMM_compute(handle,
+  check_cusparse_status(hipsparseSpGEMM_compute(handle,
                                                opA,
                                                opB,
                                                &alpha,
@@ -186,7 +187,7 @@ void spgemm_cusparse([[maybe_unused]] rmm::device_uvector<i_t>& offsetsA,
   dBuffer2.resize(bufferSize2, stream);
 
   // compute the intermediate product of A * B
-  check_cusparse_status(cusparseSpGEMM_compute(handle,
+  check_cusparse_status(hipsparseSpGEMM_compute(handle,
                                                opA,
                                                opB,
                                                &alpha,
@@ -201,21 +202,21 @@ void spgemm_cusparse([[maybe_unused]] rmm::device_uvector<i_t>& offsetsA,
                                                dBuffer2.data()));
 
   int64_t C_num_rows1, C_num_cols1, C_nnz1;
-  check_cusparse_status(cusparseSpMatGetSize(matC, &C_num_rows1, &C_num_cols1, &C_nnz1));
+  check_cusparse_status(hipsparseSpMatGetSize(matC, &C_num_rows1, &C_num_cols1, &C_nnz1));
   colsC.resize(C_nnz1, stream);
   valsC.resize(C_nnz1, stream);
 
-  check_cusparse_status(cusparseCsrSetPointers(matC, offsetsC.data(), colsC.data(), valsC.data()));
+  check_cusparse_status(hipsparseCsrSetPointers(matC, offsetsC.data(), colsC.data(), valsC.data()));
 
-  check_cusparse_status(cusparseSpGEMM_copy(
+  check_cusparse_status(hipsparseSpGEMM_copy(
     handle, opA, opB, &alpha, matA, matB, &beta, matC, computeType, alg, spgemmDesc));
   stream.synchronize();
 
-  cusparseSpGEMM_destroyDescr(spgemmDesc);
-  cusparseDestroySpMat(matA);
-  cusparseDestroySpMat(matB);
-  cusparseDestroySpMat(matC);
-  cusparseDestroy(handle);
+  hipsparseSpGEMM_destroyDescr(spgemmDesc);
+  hipsparseDestroySpMat(matA);
+  hipsparseDestroySpMat(matB);
+  hipsparseDestroySpMat(matC);
+  hipsparseDestroy(handle);
 #else
   throw std::bad_alloc();
 #endif
@@ -382,7 +383,7 @@ __device__ f_t knapsack_solve(raft::device_span<f_t> c,
     // compute sorted indices;
     double fact = w_init > a_u ? -1. : 1.;
 
-    using BlockMergeSort = cub::BlockMergeSort<f_t, TPB, 1, i_t>;
+    using BlockMergeSort = hipcub::BlockMergeSort<f_t, TPB, 1, i_t>;
     __shared__ typename BlockMergeSort::TempStorage temp_storage;
 
     f_t thread_val[1];

@@ -10,7 +10,7 @@
 #include <dual_simplex/sparse_matrix.hpp>
 #include <dual_simplex/types.hpp>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_vector.hpp>
 #include <utilities/copy_helpers.hpp>
@@ -33,9 +33,9 @@ struct sum_reduce_helper_t {
   f_t sum(InputIteratorT input, i_t size, rmm::cuda_stream_view stream_view)
   {
     buffer_size = 0;
-    cub::DeviceReduce::Sum(nullptr, buffer_size, input, out.data(), size, stream_view);
+    hipcub::DeviceReduce::Sum(nullptr, buffer_size, input, out.data(), size, stream_view);
     buffer_data.resize(buffer_size, stream_view);
-    cub::DeviceReduce::Sum(buffer_data.data(), buffer_size, input, out.data(), size, stream_view);
+    hipcub::DeviceReduce::Sum(buffer_data.data(), buffer_size, input, out.data(), size, stream_view);
     return out.value(stream_view);
   }
 };
@@ -59,12 +59,12 @@ struct transform_reduce_helper_t {
                        i_t size,
                        rmm::cuda_stream_view stream_view)
   {
-    cub::DeviceReduce::TransformReduce(
+    hipcub::DeviceReduce::TransformReduce(
       nullptr, buffer_size, input, out.data(), size, reduce_op, transform_op, init, stream_view);
 
     buffer_data.resize(buffer_size, stream_view);
 
-    cub::DeviceReduce::TransformReduce(buffer_data.data(),
+    hipcub::DeviceReduce::TransformReduce(buffer_data.data(),
                                        buffer_size,
                                        input,
                                        out.data(),
@@ -161,7 +161,7 @@ class device_csc_matrix_t {
   void form_col_index(rmm::cuda_stream_view stream)
   {
     col_index.resize(x.size(), stream);
-    RAFT_CUDA_TRY(cudaMemsetAsync(col_index.data(), 0, sizeof(i_t) * col_index.size(), stream));
+    RAFT_CUDA_TRY(hipMemsetAsync(col_index.data(), 0, sizeof(i_t) * col_index.size(), stream));
 
     // Scatter 1 when there is a col start in col_index
     if (col_start.size() > 2) {
@@ -180,10 +180,10 @@ class device_csc_matrix_t {
     // Inclusive cumulative sum to have the corresponding column for each entry
     rmm::device_buffer d_temp_storage;
     size_t temp_storage_bytes{0};
-    cub::DeviceScan::InclusiveSum(
+    hipcub::DeviceScan::InclusiveSum(
       nullptr, temp_storage_bytes, col_index.data(), col_index.data(), col_index.size(), stream);
     d_temp_storage.resize(temp_storage_bytes, stream);
-    cub::DeviceScan::InclusiveSum(d_temp_storage.data(),
+    hipcub::DeviceScan::InclusiveSum(d_temp_storage.data(),
                                   temp_storage_bytes,
                                   col_index.data(),
                                   col_index.data(),

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
  * reserved. SPDX-License-Identifier: Apache-2.0
@@ -95,7 +96,7 @@ void rins_t<i_t, f_t>::stop_rins()
 template <typename i_t, typename f_t>
 void rins_t<i_t, f_t>::run_rins()
 {
-  if (total_calls == 0) RAFT_CUDA_TRY(cudaSetDevice(context.handle_ptr->get_device()));
+  if (total_calls == 0) RAFT_CUDA_TRY(hipSetDevice(context.handle_ptr->get_device()));
 
   if (!dm.population.is_feasible()) return;
 

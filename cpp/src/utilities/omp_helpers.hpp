@@ -131,6 +131,56 @@ inline double fetch_max(omp_atomic_t<double>& atomic_var, double other)
 }
 #endif
 
-#endif
+}  // namespace cuopt
+
+#else  // _OPENMP not defined
+
+namespace cuopt {
+// Dummy types when OpenMP is not available - should not be used
+class omp_mutex_t {
+public:
+  void lock() {}
+  void unlock() {}
+  bool try_lock() { return true; }
+};
+
+template <typename T>
+class omp_atomic_t {
+public:
+  omp_atomic_t() = default;
+  omp_atomic_t(T val) : val(val) {}
+  T operator=(T new_val) { val = new_val; return new_val; }
+  operator T() { return val; }
+  T operator+=(T inc) { val += inc; return val; }
+  T operator-=(T inc) { val -= inc; return val; }
+  T operator++() { return ++val; }
+  T operator++(int) { return val++; }
+  T operator--() { return --val; }
+  T operator--(int) { return val--; }
+  T load() const { return val; }
+  void store(T new_val) { val = new_val; }
+  T exchange(T other) { T old = val; val = other; return old; }
+  T fetch_add(T inc) { T old = val; val += inc; return old; }
+  T fetch_sub(T inc) { T old = val; val -= inc; return old; }
+private:
+  T val;
+};
+
+// Non-OpenMP fallback for fetch_min/fetch_max
+inline double fetch_min(omp_atomic_t<double>& atomic_var, double other)
+{
+  double old = atomic_var.load();
+  if (other < old) { atomic_var.store(other); }
+  return old;
+}
+
+inline double fetch_max(omp_atomic_t<double>& atomic_var, double other)
+{
+  double old = atomic_var.load();
+  if (other > old) { atomic_var.store(other); }
+  return old;
+}
 
 }  // namespace cuopt
+
+#endif  // _OPENMP

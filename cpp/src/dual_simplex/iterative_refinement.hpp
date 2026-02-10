@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -366,7 +367,7 @@ f_t iterative_refinement(T& op, const dense_vector_t<i_t, f_t>& b, dense_vector_
 
   raft::copy(x.data(), d_x.data(), x.size(), op.data_.handle_ptr->get_stream());
 
-  RAFT_CUDA_TRY(cudaStreamSynchronize(op.data_.handle_ptr->get_stream()));
+  RAFT_CUDA_TRY(hipStreamSynchronize(op.data_.handle_ptr->get_stream()));
   return err;
 }
 

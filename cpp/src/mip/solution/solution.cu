@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -314,9 +315,9 @@ f_t solution_t<i_t, f_t>::compute_l2_residual()
     [] __device__(f_t lower, f_t upper) -> f_t { return max(abs(lower), abs(upper)); },
     handle_ptr->get_stream());
   RAFT_CUBLAS_TRY(raft::linalg::detail::cublassetpointermode(
-    handle_ptr->get_cublas_handle(), CUBLAS_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr->get_cublas_handle(), HIPBLAS_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsesetpointermode(
-    handle_ptr->get_cusparse_handle(), CUSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr->get_cusparse_handle(), HIPSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
   my_l2_norm<i_t, f_t>(combined_excess, l2_residual, handle_ptr);
   return l2_residual.value(handle_ptr->get_stream());
 }

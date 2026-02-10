@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -17,7 +18,7 @@
 #include <utilities/copy_helpers.hpp>
 #include <utilities/device_utils.cuh>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 #include "bounds_presolve.cuh"
 #include "bounds_presolve_helpers.cuh"
 #include "bounds_update_helpers.cuh"

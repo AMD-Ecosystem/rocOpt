@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -18,7 +19,7 @@
 
 #include <mip/feasibility_jump/fj_cpu.cuh>
 
-#include <cuda_profiler_api.h>
+#include <hip/hip_runtime_api.h>
 
 #include <future>
 
@@ -81,7 +82,7 @@ void local_search_t<i_t, f_t>::start_cpufj_scratch_threads(population_t<i_t, f_t
                                                       /*randomize=*/counter > 0);
 
     cpu_fj.fj_cpu->log_prefix           = "******* scratch " + std::to_string(counter) + ": ";
-    cpu_fj.fj_cpu->improvement_callback = [&population](f_t obj, const std::vector<f_t>& h_vec) {
+    cpu_fj.fj_cpu->improvement_callback = [this, &population](f_t obj, const std::vector<f_t>& h_vec) {
       population.add_external_solution(h_vec, obj, solution_origin_t::CPUFJ);
       if (obj < local_search_best_obj) {
         CUOPT_LOG_TRACE("******* New local search best obj %g, best overall %g",
@@ -129,7 +130,7 @@ void local_search_t<i_t, f_t>::start_cpufj_lptopt_scratch_threads(
     };
 
   // default weights
-  cudaDeviceSynchronize();
+  (void)hipDeviceSynchronize();
   scratch_cpu_fj_on_lp_opt.start_cpu_solver();
 }
 

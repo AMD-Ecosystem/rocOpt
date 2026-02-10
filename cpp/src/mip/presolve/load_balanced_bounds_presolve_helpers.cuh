@@ -18,7 +18,7 @@
 #include <rmm/device_uvector.hpp>
 #include <vector>
 
-#include <cuda_runtime_api.h>
+#include <hip/hip_runtime_api.h>
 
 namespace cuopt::linear_programming::detail {
 
@@ -367,8 +367,8 @@ template <typename i_t,
           typename f_t2,
           i_t threads_per_constraint,
           typename activity_view_t>
-void create_activity_sub_warp(cudaGraph_t act_graph,
-                              cudaGraphNode_t& set_bounds_changed_node,
+void create_activity_sub_warp(hipGraph_t act_graph,
+                              hipGraphNode_t& set_bounds_changed_node,
                               activity_view_t view,
                               i_t degree_beg,
                               i_t degree_end,
@@ -381,9 +381,9 @@ void create_activity_sub_warp(cudaGraph_t act_graph,
 
   auto block_count = raft::ceildiv<i_t>(cnst_id_end - cnst_id_beg, cnst_per_block);
   if (block_count != 0) {
-    cudaGraphNode_t act_sub_warp_node;
+    hipGraphNode_t act_sub_warp_node;
     void* kernelArgs[]                    = {&cnst_id_beg, &cnst_id_end, &view};
-    cudaKernelNodeParams kernelNodeParams = {0};
+    hipKernelNodeParams kernelNodeParams = {0};
 
     kernelNodeParams.gridDim        = dim3(block_count, 1, 1);
     kernelNodeParams.blockDim       = dim3(block_dim, 1, 1);
@@ -408,8 +408,8 @@ void create_activity_sub_warp(cudaGraph_t act_graph,
                                                                  activity_view_t>;
     }
 
-    cudaGraphAddKernelNode(&act_sub_warp_node, act_graph, NULL, 0, &kernelNodeParams);
-    cudaGraphAddDependencies(act_graph,
+    hipGraphAddKernelNode(&act_sub_warp_node, act_graph, NULL, 0, &kernelNodeParams);
+    hipGraphAddDependencies(act_graph,
                              &act_sub_warp_node,        // "from" nodes
                              &set_bounds_changed_node,  // "to" nodes
 #if CUDA_VER_13_0_UP
@@ -424,8 +424,8 @@ template <typename i_t,
           typename f_t2,
           i_t threads_per_constraint,
           typename activity_view_t>
-void create_activity_sub_warp(cudaGraph_t act_graph,
-                              cudaGraphNode_t& set_bounds_changed_node,
+void create_activity_sub_warp(hipGraph_t act_graph,
+                              hipGraphNode_t& set_bounds_changed_node,
                               activity_view_t view,
                               i_t degree,
                               const std::vector<i_t>& cnst_bin_offsets,
@@ -436,8 +436,8 @@ void create_activity_sub_warp(cudaGraph_t act_graph,
 }
 
 template <typename i_t, typename f_t, typename f_t2, typename activity_view_t>
-void create_activity_sub_warp(cudaGraph_t act_graph,
-                              cudaGraphNode_t& set_bounds_changed_node,
+void create_activity_sub_warp(hipGraph_t act_graph,
+                              hipGraphNode_t& set_bounds_changed_node,
                               activity_view_t view,
                               i_t cnst_sub_warp_count,
                               rmm::device_uvector<i_t>& warp_cnst_offsets,
@@ -448,12 +448,12 @@ void create_activity_sub_warp(cudaGraph_t act_graph,
 
   auto block_count = raft::ceildiv<i_t>(cnst_sub_warp_count * 32, block_dim);
   if (block_count != 0) {
-    cudaGraphNode_t act_sub_warp_node;
+    hipGraphNode_t act_sub_warp_node;
     auto warp_cnst_offsets_span    = make_span(warp_cnst_offsets);
     auto warp_cnst_id_offsets_span = make_span(warp_cnst_id_offsets);
 
     void* kernelArgs[] = {&view, &warp_cnst_offsets_span, &warp_cnst_id_offsets_span};
-    cudaKernelNodeParams kernelNodeParams = {0};
+    hipKernelNodeParams kernelNodeParams = {0};
 
     kernelNodeParams.gridDim        = dim3(block_count, 1, 1);
     kernelNodeParams.blockDim       = dim3(block_dim, 1, 1);
@@ -469,8 +469,8 @@ void create_activity_sub_warp(cudaGraph_t act_graph,
         (void*)lb_calc_act_sub_warp_kernel<false, i_t, f_t, f_t2, block_dim, activity_view_t>;
     }
 
-    cudaGraphAddKernelNode(&act_sub_warp_node, act_graph, NULL, 0, &kernelNodeParams);
-    cudaGraphAddDependencies(act_graph,
+    hipGraphAddKernelNode(&act_sub_warp_node, act_graph, NULL, 0, &kernelNodeParams);
+    hipGraphAddDependencies(act_graph,
                              &act_sub_warp_node,        // "from" nodes
                              &set_bounds_changed_node,  // "to" nodes
 #if CUDA_VER_13_0_UP
@@ -481,8 +481,8 @@ void create_activity_sub_warp(cudaGraph_t act_graph,
 }
 
 template <typename i_t, typename f_t, typename f_t2, typename activity_view_t>
-void create_activity_sub_warp(cudaGraph_t act_graph,
-                              cudaGraphNode_t& set_bounds_changed_node,
+void create_activity_sub_warp(hipGraph_t act_graph,
+                              hipGraphNode_t& set_bounds_changed_node,
                               activity_view_t view,
                               bool is_cnst_sub_warp_single_bin,
                               i_t cnst_sub_warp_count,
@@ -527,8 +527,8 @@ void create_activity_sub_warp(cudaGraph_t act_graph,
 }
 
 template <typename i_t, typename f_t, typename f_t2, i_t block_dim, typename activity_view_t>
-void create_activity_per_block(cudaGraph_t act_graph,
-                               cudaGraphNode_t& set_bounds_changed_node,
+void create_activity_per_block(hipGraph_t act_graph,
+                               hipGraphNode_t& set_bounds_changed_node,
                                activity_view_t view,
                                const std::vector<i_t>& cnst_bin_offsets,
                                i_t degree_beg,
@@ -541,10 +541,10 @@ void create_activity_per_block(cudaGraph_t act_graph,
 
   auto block_count = cnst_id_end - cnst_id_beg;
   if (block_count > 0) {
-    cudaGraphNode_t act_block_node;
+    hipGraphNode_t act_block_node;
     void* kernelArgs[] = {&cnst_id_beg, &view};
 
-    cudaKernelNodeParams kernelNodeParams = {0};
+    hipKernelNodeParams kernelNodeParams = {0};
 
     kernelNodeParams.gridDim        = dim3(block_count, 1, 1);
     kernelNodeParams.blockDim       = dim3(block_dim, 1, 1);
@@ -559,8 +559,8 @@ void create_activity_per_block(cudaGraph_t act_graph,
         (void*)lb_calc_act_block_kernel<false, i_t, f_t, f_t2, block_dim, activity_view_t>;
     }
 
-    cudaGraphAddKernelNode(&act_block_node, act_graph, NULL, 0, &kernelNodeParams);
-    cudaGraphAddDependencies(act_graph,
+    hipGraphAddKernelNode(&act_block_node, act_graph, NULL, 0, &kernelNodeParams);
+    hipGraphAddDependencies(act_graph,
                              &act_block_node,           // "from" nodes
                              &set_bounds_changed_node,  // "to" nodes
 #if CUDA_VER_13_0_UP
@@ -571,8 +571,8 @@ void create_activity_per_block(cudaGraph_t act_graph,
 }
 
 template <typename i_t, typename f_t, typename f_t2, typename activity_view_t>
-void create_activity_per_block(cudaGraph_t act_graph,
-                               cudaGraphNode_t& set_bounds_changed_node,
+void create_activity_per_block(hipGraph_t act_graph,
+                               hipGraphNode_t& set_bounds_changed_node,
                                activity_view_t view,
                                const std::vector<i_t>& cnst_bin_offsets,
                                i_t heavy_degree_cutoff,
@@ -603,8 +603,8 @@ void create_activity_per_block(cudaGraph_t act_graph,
 }
 
 template <typename i_t, typename f_t, typename f_t2, i_t block_dim, typename activity_view_t>
-void create_activity_heavy_cnst(cudaGraph_t act_graph,
-                                cudaGraphNode_t& set_bounds_changed_node,
+void create_activity_heavy_cnst(hipGraph_t act_graph,
+                                hipGraphNode_t& set_bounds_changed_node,
                                 activity_view_t view,
                                 raft::device_span<f_t2> tmp_cnst_act,
                                 const rmm::device_uvector<i_t>& heavy_cnst_vertex_ids,
@@ -617,8 +617,8 @@ void create_activity_heavy_cnst(cudaGraph_t act_graph,
                                 bool dry_run = false)
 {
   if (num_blocks_heavy_cnst != 0) {
-    cudaGraphNode_t act_heavy_node;
-    cudaGraphNode_t finalize_heavy_node;
+    hipGraphNode_t act_heavy_node;
+    hipGraphNode_t finalize_heavy_node;
     // Add heavy kernel
     {
       auto heavy_cnst_beg_id                = get_id_offset(cnst_bin_offsets, heavy_degree_cutoff);
@@ -633,7 +633,7 @@ void create_activity_heavy_cnst(cudaGraph_t act_graph,
                             &view,
                             &tmp_cnst_act};
 
-      cudaKernelNodeParams kernelNodeParams = {0};
+      hipKernelNodeParams kernelNodeParams = {0};
 
       kernelNodeParams.func =
         (void*)lb_calc_act_heavy_kernel<i_t, f_t, f_t2, block_dim, activity_view_t>;
@@ -643,7 +643,7 @@ void create_activity_heavy_cnst(cudaGraph_t act_graph,
       kernelNodeParams.kernelParams   = (void**)kernelArgs;
       kernelNodeParams.extra          = NULL;
 
-      cudaGraphAddKernelNode(&act_heavy_node, act_graph, NULL, 0, &kernelNodeParams);
+      hipGraphAddKernelNode(&act_heavy_node, act_graph, NULL, 0, &kernelNodeParams);
     }
     {
       auto heavy_cnst_beg_id              = get_id_offset(cnst_bin_offsets, heavy_degree_cutoff);
@@ -653,7 +653,7 @@ void create_activity_heavy_cnst(cudaGraph_t act_graph,
       void* kernelArgs[] = {
         &heavy_cnst_beg_id, &heavy_cnst_block_segments_span, &tmp_cnst_act, &view};
 
-      cudaKernelNodeParams kernelNodeParams = {0};
+      hipKernelNodeParams kernelNodeParams = {0};
 
       kernelNodeParams.gridDim        = dim3(num_heavy_cnst, 1, 1);
       kernelNodeParams.blockDim       = dim3(32, 1, 1);
@@ -668,17 +668,17 @@ void create_activity_heavy_cnst(cudaGraph_t act_graph,
           (void*)finalize_calc_act_kernel<false, i_t, f_t, f_t2, activity_view_t>;
       }
 
-      cudaGraphAddKernelNode(&finalize_heavy_node, act_graph, NULL, 0, &kernelNodeParams);
+      hipGraphAddKernelNode(&finalize_heavy_node, act_graph, NULL, 0, &kernelNodeParams);
     }
 
-    cudaGraphAddDependencies(act_graph,
+    hipGraphAddDependencies(act_graph,
                              &act_heavy_node,       // "from" nodes
                              &finalize_heavy_node,  // "to" nodes
 #if CUDA_VER_13_0_UP
                              nullptr,  // edge data
 #endif
                              1);  // number of dependencies
-    cudaGraphAddDependencies(act_graph,
+    hipGraphAddDependencies(act_graph,
                              &finalize_heavy_node,      // "from" nodes
                              &set_bounds_changed_node,  // "to" nodes
 #if CUDA_VER_13_0_UP
@@ -862,8 +862,8 @@ template <typename i_t,
           typename f_t2,
           i_t threads_per_variable,
           typename bounds_update_view_t>
-void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
-                                   cudaGraphNode_t& bounds_changed_node,
+void create_update_bounds_sub_warp(hipGraph_t upd_graph,
+                                   hipGraphNode_t& bounds_changed_node,
                                    bounds_update_view_t view,
                                    i_t degree_beg,
                                    i_t degree_end,
@@ -875,11 +875,11 @@ void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
 
   auto block_count = raft::ceildiv<i_t>(vars_id_end - vars_id_beg, vars_per_block);
   if (block_count != 0) {
-    cudaGraphNode_t upd_bnd_sub_warp_node;
+    hipGraphNode_t upd_bnd_sub_warp_node;
 
     void* kernelArgs[] = {&vars_id_beg, &vars_id_end, &view};
 
-    cudaKernelNodeParams kernelNodeParams = {0};
+    hipKernelNodeParams kernelNodeParams = {0};
 
     kernelNodeParams.func           = (void*)lb_upd_bnd_sub_warp_kernel<i_t,
                                                                         f_t,
@@ -893,17 +893,17 @@ void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
     kernelNodeParams.kernelParams   = (void**)kernelArgs;
     kernelNodeParams.extra          = NULL;
 
-    cudaGraphAddKernelNode(&upd_bnd_sub_warp_node, upd_graph, NULL, 0, &kernelNodeParams);
-    RAFT_CUDA_TRY(cudaGetLastError());
+    hipGraphAddKernelNode(&upd_bnd_sub_warp_node, upd_graph, NULL, 0, &kernelNodeParams);
+    RAFT_CUDA_TRY(hipGetLastError());
 
-    cudaGraphAddDependencies(upd_graph,
+    hipGraphAddDependencies(upd_graph,
                              &upd_bnd_sub_warp_node,  // "from" nodes
                              &bounds_changed_node,    // "to" nodes
 #if CUDA_VER_13_0_UP
                              nullptr,  // edge data
 #endif
                              1);  // number of dependencies
-    RAFT_CUDA_TRY(cudaGetLastError());
+    RAFT_CUDA_TRY(hipGetLastError());
   }
 }
 
@@ -912,8 +912,8 @@ template <typename i_t,
           typename f_t2,
           i_t threads_per_variable,
           typename bounds_update_view_t>
-void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
-                                   cudaGraphNode_t& bounds_changed_node,
+void create_update_bounds_sub_warp(hipGraph_t upd_graph,
+                                   hipGraphNode_t& bounds_changed_node,
                                    bounds_update_view_t view,
                                    i_t degree,
                                    const std::vector<i_t>& vars_bin_offsets)
@@ -923,8 +923,8 @@ void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
 }
 
 template <typename i_t, typename f_t, typename f_t2, typename bounds_update_view_t>
-void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
-                                   cudaGraphNode_t& bounds_changed_node,
+void create_update_bounds_sub_warp(hipGraph_t upd_graph,
+                                   hipGraphNode_t& bounds_changed_node,
                                    bounds_update_view_t view,
                                    i_t vars_sub_warp_count,
                                    rmm::device_uvector<i_t>& warp_vars_offsets,
@@ -934,14 +934,14 @@ void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
 
   auto block_count = raft::ceildiv<i_t>(vars_sub_warp_count * 32, block_dim);
   if (block_count != 0) {
-    cudaGraphNode_t upd_bnd_sub_warp_node;
+    hipGraphNode_t upd_bnd_sub_warp_node;
 
     auto warp_vars_offsets_span    = make_span(warp_vars_offsets);
     auto warp_vars_id_offsets_span = make_span(warp_vars_id_offsets);
 
     void* kernelArgs[] = {&view, &warp_vars_offsets_span, &warp_vars_id_offsets_span};
 
-    cudaKernelNodeParams kernelNodeParams = {0};
+    hipKernelNodeParams kernelNodeParams = {0};
 
     kernelNodeParams.func =
       (void*)lb_upd_bnd_sub_warp_kernel<i_t, f_t, f_t2, block_dim, bounds_update_view_t>;
@@ -951,23 +951,23 @@ void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
     kernelNodeParams.kernelParams   = (void**)kernelArgs;
     kernelNodeParams.extra          = NULL;
 
-    cudaGraphAddKernelNode(&upd_bnd_sub_warp_node, upd_graph, NULL, 0, &kernelNodeParams);
-    RAFT_CUDA_TRY(cudaGetLastError());
+    hipGraphAddKernelNode(&upd_bnd_sub_warp_node, upd_graph, NULL, 0, &kernelNodeParams);
+    RAFT_CUDA_TRY(hipGetLastError());
 
-    cudaGraphAddDependencies(upd_graph,
+    hipGraphAddDependencies(upd_graph,
                              &upd_bnd_sub_warp_node,  // "from" nodes
                              &bounds_changed_node,    // "to" nodes
 #if CUDA_VER_13_0_UP
                              nullptr,  // edge data
 #endif
                              1);  // number of dependencies
-    RAFT_CUDA_TRY(cudaGetLastError());
+    RAFT_CUDA_TRY(hipGetLastError());
   }
 }
 
 template <typename i_t, typename f_t, typename f_t2, typename bounds_update_view_t>
-void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
-                                   cudaGraphNode_t& bounds_changed_node,
+void create_update_bounds_sub_warp(hipGraph_t upd_graph,
+                                   hipGraphNode_t& bounds_changed_node,
                                    bounds_update_view_t view,
                                    bool is_vars_sub_warp_single_bin,
                                    i_t vars_sub_warp_count,
@@ -1010,8 +1010,8 @@ void create_update_bounds_sub_warp(cudaGraph_t upd_graph,
 }
 
 template <typename i_t, typename f_t, typename f_t2, i_t block_dim, typename bounds_update_view_t>
-void create_update_bounds_per_block(cudaGraph_t upd_graph,
-                                    cudaGraphNode_t& bounds_changed_node,
+void create_update_bounds_per_block(hipGraph_t upd_graph,
+                                    hipGraphNode_t& bounds_changed_node,
                                     bounds_update_view_t view,
                                     const std::vector<i_t>& vars_bin_offsets,
                                     i_t degree_beg,
@@ -1021,11 +1021,11 @@ void create_update_bounds_per_block(cudaGraph_t upd_graph,
 
   auto block_count = vars_id_end - vars_id_beg;
   if (block_count > 0) {
-    cudaGraphNode_t upd_bnd_block_node;
+    hipGraphNode_t upd_bnd_block_node;
 
     void* kernelArgs[] = {&vars_id_beg, &view};
 
-    cudaKernelNodeParams kernelNodeParams = {0};
+    hipKernelNodeParams kernelNodeParams = {0};
 
     kernelNodeParams.func =
       (void*)lb_upd_bnd_block_kernel<i_t, f_t, f_t2, block_dim, bounds_update_view_t>;
@@ -1035,23 +1035,23 @@ void create_update_bounds_per_block(cudaGraph_t upd_graph,
     kernelNodeParams.kernelParams   = (void**)kernelArgs;
     kernelNodeParams.extra          = NULL;
 
-    cudaGraphAddKernelNode(&upd_bnd_block_node, upd_graph, NULL, 0, &kernelNodeParams);
-    RAFT_CUDA_TRY(cudaGetLastError());
+    hipGraphAddKernelNode(&upd_bnd_block_node, upd_graph, NULL, 0, &kernelNodeParams);
+    RAFT_CUDA_TRY(hipGetLastError());
 
-    cudaGraphAddDependencies(upd_graph,
+    hipGraphAddDependencies(upd_graph,
                              &upd_bnd_block_node,   // "from" nodes
                              &bounds_changed_node,  // "to" nodes
 #if CUDA_VER_13_0_UP
                              nullptr,  // edge data
 #endif
                              1);  // number of dependencies
-    RAFT_CUDA_TRY(cudaGetLastError());
+    RAFT_CUDA_TRY(hipGetLastError());
   }
 }
 
 template <typename i_t, typename f_t, typename f_t2, typename bounds_update_view_t>
-void create_update_bounds_per_block(cudaGraph_t upd_graph,
-                                    cudaGraphNode_t& bounds_changed_node,
+void create_update_bounds_per_block(hipGraph_t upd_graph,
+                                    hipGraphNode_t& bounds_changed_node,
                                     bounds_update_view_t view,
                                     const std::vector<i_t>& vars_bin_offsets,
                                     i_t heavy_degree_cutoff)
@@ -1076,8 +1076,8 @@ void create_update_bounds_per_block(cudaGraph_t upd_graph,
 }
 
 template <typename i_t, typename f_t, typename f_t2, i_t block_dim, typename bounds_update_view_t>
-void create_update_bounds_heavy_vars(cudaGraph_t upd_graph,
-                                     cudaGraphNode_t& bounds_changed_node,
+void create_update_bounds_heavy_vars(hipGraph_t upd_graph,
+                                     hipGraphNode_t& bounds_changed_node,
                                      bounds_update_view_t view,
                                      raft::device_span<f_t2> tmp_vars_bnd,
                                      const rmm::device_uvector<i_t>& heavy_vars_vertex_ids,
@@ -1088,8 +1088,8 @@ void create_update_bounds_heavy_vars(cudaGraph_t upd_graph,
                                      i_t num_blocks_heavy_vars)
 {
   if (num_blocks_heavy_vars != 0) {
-    cudaGraphNode_t upd_bnd_heavy_node;
-    cudaGraphNode_t finalize_heavy_node;
+    hipGraphNode_t upd_bnd_heavy_node;
+    hipGraphNode_t finalize_heavy_node;
     // Add heavy kernel
     {
       auto heavy_vars_beg_id                = get_id_offset(vars_bin_offsets, heavy_degree_cutoff);
@@ -1104,7 +1104,7 @@ void create_update_bounds_heavy_vars(cudaGraph_t upd_graph,
                             &view,
                             &tmp_vars_bnd};
 
-      cudaKernelNodeParams kernelNodeParams = {0};
+      hipKernelNodeParams kernelNodeParams = {0};
 
       kernelNodeParams.func =
         (void*)lb_upd_bnd_heavy_kernel<i_t, f_t, f_t2, block_dim, bounds_update_view_t>;
@@ -1114,8 +1114,8 @@ void create_update_bounds_heavy_vars(cudaGraph_t upd_graph,
       kernelNodeParams.kernelParams   = (void**)kernelArgs;
       kernelNodeParams.extra          = NULL;
 
-      cudaGraphAddKernelNode(&upd_bnd_heavy_node, upd_graph, NULL, 0, &kernelNodeParams);
-      RAFT_CUDA_TRY(cudaGetLastError());
+      hipGraphAddKernelNode(&upd_bnd_heavy_node, upd_graph, NULL, 0, &kernelNodeParams);
+      RAFT_CUDA_TRY(hipGetLastError());
     }
     // Add finalize
     {
@@ -1126,7 +1126,7 @@ void create_update_bounds_heavy_vars(cudaGraph_t upd_graph,
       void* kernelArgs[] = {
         &heavy_vars_beg_id, &heavy_vars_block_segments_span, &tmp_vars_bnd, &view};
 
-      cudaKernelNodeParams kernelNodeParams = {0};
+      hipKernelNodeParams kernelNodeParams = {0};
 
       kernelNodeParams.func = (void*)finalize_upd_bnd_kernel<i_t, f_t, f_t2, bounds_update_view_t>;
       kernelNodeParams.gridDim        = dim3(num_heavy_vars, 1, 1);
@@ -1135,25 +1135,25 @@ void create_update_bounds_heavy_vars(cudaGraph_t upd_graph,
       kernelNodeParams.kernelParams   = (void**)kernelArgs;
       kernelNodeParams.extra          = NULL;
 
-      cudaGraphAddKernelNode(&finalize_heavy_node, upd_graph, NULL, 0, &kernelNodeParams);
-      RAFT_CUDA_TRY(cudaGetLastError());
+      hipGraphAddKernelNode(&finalize_heavy_node, upd_graph, NULL, 0, &kernelNodeParams);
+      RAFT_CUDA_TRY(hipGetLastError());
     }
-    cudaGraphAddDependencies(upd_graph,
+    hipGraphAddDependencies(upd_graph,
                              &upd_bnd_heavy_node,   // "from" nodes
                              &finalize_heavy_node,  // "to" nodes
 #if CUDA_VER_13_0_UP
                              nullptr,  // edge data
 #endif
                              1);  // number of dependencies
-    RAFT_CUDA_TRY(cudaGetLastError());
-    cudaGraphAddDependencies(upd_graph,
+    RAFT_CUDA_TRY(hipGetLastError());
+    hipGraphAddDependencies(upd_graph,
                              &finalize_heavy_node,  // "from" nodes
                              &bounds_changed_node,  // "to" nodes
 #if CUDA_VER_13_0_UP
                              nullptr,  // edge data
 #endif
                              1);  // number of dependencies
-    RAFT_CUDA_TRY(cudaGetLastError());
+    RAFT_CUDA_TRY(hipGetLastError());
   }
 }
 

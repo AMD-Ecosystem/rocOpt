@@ -15,8 +15,8 @@
 #include <raft/sparse/detail/cusparse_wrappers.h>
 #include <raft/sparse/linalg/transpose.cuh>
 
-#include <cuda_runtime.h>
-#include <cuda_runtime_api.h>
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime_api.h>
 #include <dlfcn.h>
 
 namespace cuopt::linear_programming::detail {
@@ -31,7 +31,7 @@ cusparse_sp_mat_descr_wrapper_t<i_t, f_t>::cusparse_sp_mat_descr_wrapper_t()
 template <typename i_t, typename f_t>
 cusparse_sp_mat_descr_wrapper_t<i_t, f_t>::~cusparse_sp_mat_descr_wrapper_t()
 {
-  if (need_destruction_) { RAFT_CUSPARSE_TRY_NO_THROW(cusparseDestroySpMat(descr_)); }
+  if (need_destruction_) { RAFT_CUSPARSE_TRY_NO_THROW(hipsparseDestroySpMat(descr_)); }
 }
 
 template <typename i_t, typename f_t>
@@ -51,7 +51,7 @@ void cusparse_sp_mat_descr_wrapper_t<i_t, f_t>::create(
 }
 
 template <typename i_t, typename f_t>
-cusparse_sp_mat_descr_wrapper_t<i_t, f_t>::operator cusparseSpMatDescr_t() const
+cusparse_sp_mat_descr_wrapper_t<i_t, f_t>::operator hipsparseSpMatDescr_t() const
 {
   return descr_;
 }
@@ -65,7 +65,7 @@ cusparse_dn_vec_descr_wrapper_t<f_t>::cusparse_dn_vec_descr_wrapper_t() : need_d
 template <typename f_t>
 cusparse_dn_vec_descr_wrapper_t<f_t>::~cusparse_dn_vec_descr_wrapper_t()
 {
-  if (need_destruction_) { RAFT_CUSPARSE_TRY_NO_THROW(cusparseDestroyDnVec(descr_)); }
+  if (need_destruction_) { RAFT_CUSPARSE_TRY_NO_THROW(hipsparseDestroyDnVec(descr_)); }
 }
 
 template <typename f_t>
@@ -79,7 +79,7 @@ template <typename f_t>
 cusparse_dn_vec_descr_wrapper_t<f_t>& cusparse_dn_vec_descr_wrapper_t<f_t>::operator=(
   cusparse_dn_vec_descr_wrapper_t<f_t>&& other)
 {
-  if (need_destruction_) { RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(descr_)); }
+  if (need_destruction_) { RAFT_CUSPARSE_TRY(hipsparseDestroyDnVec(descr_)); }
   descr_                  = other.descr_;
   other.need_destruction_ = false;
   return *this;
@@ -93,14 +93,16 @@ void cusparse_dn_vec_descr_wrapper_t<f_t>::create(int64_t size, f_t* values)
 }
 
 template <typename f_t>
-cusparse_dn_vec_descr_wrapper_t<f_t>::operator cusparseDnVecDescr_t() const
+cusparse_dn_vec_descr_wrapper_t<f_t>::operator hipsparseDnVecDescr_t() const
 {
   return descr_;
 }
 
+#ifndef CUDA_VER_12_4_UP
 #define CUDA_VER_12_4_UP (CUDART_VERSION >= 12040)
+#endif
 
-#if CUDA_VER_12_4_UP
+#if CUDA_VER_12_4_UP && !defined(__HIP_PLATFORM_AMD__)
 struct dynamic_load_runtime {
   static void* get_cusparse_runtime_handle()
   {
@@ -125,7 +127,7 @@ struct dynamic_load_runtime {
   }
 
   template <typename... Args>
-  using function_sig = std::add_pointer_t<cusparseStatus_t(Args...)>;
+  using function_sig = std::add_pointer_t<hipsparseStatus_t(Args...)>;
 
   template <typename signature>
   static std::optional<signature> function(const char* func_name)
@@ -141,37 +143,37 @@ struct dynamic_load_runtime {
 template <typename... Args>
 using cusparse_sig = dynamic_load_runtime::function_sig<Args...>;
 
-using cusparseSpMV_preprocess_sig = cusparse_sig<cusparseHandle_t,
-                                                 cusparseOperation_t,
+using cusparseSpMV_preprocess_sig = cusparse_sig<hipsparseHandle_t,
+                                                 hipsparseOperation_t,
                                                  const void*,
-                                                 cusparseConstSpMatDescr_t,
-                                                 cusparseConstDnVecDescr_t,
+                                                 hipsparseConstSpMatDescr_t,
+                                                 hipsparseConstDnVecDescr_t,
                                                  const void*,
-                                                 cusparseDnVecDescr_t,
-                                                 cudaDataType,
-                                                 cusparseSpMVAlg_t,
+                                                 hipsparseDnVecDescr_t,
+                                                 hipDataType,
+                                                 hipsparseSpMVAlg_t,
                                                  void*>;
 
 // This is tmp until it's added to raft
 template <
   typename T,
   typename std::enable_if_t<std::is_same_v<T, float> || std::is_same_v<T, double>>* = nullptr>
-void my_cusparsespmv_preprocess(cusparseHandle_t handle,
-                                cusparseOperation_t opA,
+void my_cusparsespmv_preprocess(hipsparseHandle_t handle,
+                                hipsparseOperation_t opA,
                                 const T* alpha,
-                                cusparseConstSpMatDescr_t matA,
-                                cusparseConstDnVecDescr_t vecX,
+                                hipsparseConstSpMatDescr_t matA,
+                                hipsparseConstDnVecDescr_t vecX,
                                 const T* beta,
-                                cusparseDnVecDescr_t vecY,
-                                cusparseSpMVAlg_t alg,
+                                hipsparseDnVecDescr_t vecY,
+                                hipsparseSpMVAlg_t alg,
                                 void* externalBuffer,
-                                cudaStream_t stream)
+                                hipStream_t stream)
 {
   auto constexpr float_type = []() constexpr {
     if constexpr (std::is_same_v<T, float>) {
-      return CUDA_R_32F;
+      return HIP_R_32F;
     } else if constexpr (std::is_same_v<T, double>) {
-      return CUDA_R_64F;
+      return HIP_R_64F;
     }
   }();
 
@@ -179,12 +181,30 @@ void my_cusparsespmv_preprocess(cusparseHandle_t handle,
   // Since cusparse is only available post >= 12.4 we need to use dlsym to make sure the symbol is
   // present at runtime
   static const auto func =
-    dynamic_load_runtime::function<cusparseSpMV_preprocess_sig>("cusparseSpMV_preprocess");
+    dynamic_load_runtime::function<cusparseSpMV_preprocess_sig>("hipsparseSpMV_preprocess");
   if (func.has_value()) {
-    RAFT_CUSPARSE_TRY(cusparseSetStream(handle, stream));
+    RAFT_CUSPARSE_TRY(hipsparseSetStream(handle, stream));
     RAFT_CUSPARSE_TRY(
       (*func)(handle, opA, alpha, matA, vecX, beta, vecY, float_type, alg, externalBuffer));
   }
+}
+#else
+// ROCm stub: hipsparseSpMV_preprocess not available or not needed
+template <
+  typename T,
+  typename std::enable_if_t<std::is_same_v<T, float> || std::is_same_v<T, double>>* = nullptr>
+void my_cusparsespmv_preprocess(hipsparseHandle_t handle,
+                                hipsparseOperation_t opA,
+                                const T* alpha,
+                                hipsparseConstSpMatDescr_t matA,
+                                hipsparseConstDnVecDescr_t vecX,
+                                const T* beta,
+                                hipsparseDnVecDescr_t vecY,
+                                hipsparseSpMVAlg_t alg,
+                                void* externalBuffer,
+                                hipStream_t stream)
+{
+  // No-op for ROCm: preprocessing not required/available
 }
 #endif
 
@@ -225,7 +245,7 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   raft::common::nvtx::range fun_scope("Initializing cuSparse view");
 
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "PDHG cusparse view init" << std::endl;
 #endif
 
@@ -277,13 +297,13 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   size_t buffer_size_non_transpose = 0;
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv_buffersize(handle_ptr_->get_cusparse_handle(),
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                  HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                   alpha.data(),
                                                   A,
                                                   c,
                                                   beta.data(),
                                                   dual_solution,
-                                                  CUSPARSE_SPMV_CSR_ALG2,
+                                                  HIPSPARSE_SPMV_CSR_ALG2,
                                                   &buffer_size_non_transpose,
                                                   handle_ptr->get_stream()));
   buffer_non_transpose.resize(buffer_size_non_transpose, handle_ptr->get_stream());
@@ -291,13 +311,13 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   size_t buffer_size_transpose = 0;
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv_buffersize(handle_ptr_->get_cusparse_handle(),
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                  HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                   alpha.data(),
                                                   A_T,
                                                   dual_solution,
                                                   beta.data(),
                                                   c,
-                                                  CUSPARSE_SPMV_CSR_ALG2,
+                                                  HIPSPARSE_SPMV_CSR_ALG2,
                                                   &buffer_size_transpose,
                                                   handle_ptr->get_stream()));
 
@@ -305,24 +325,24 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
 
 #if CUDA_VER_12_4_UP
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
-                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             HIPSPARSE_OPERATION_NON_TRANSPOSE,
                              alpha.data(),
                              A,
                              c,
                              beta.data(),
                              dual_solution,
-                             CUSPARSE_SPMV_CSR_ALG2,
+                             HIPSPARSE_SPMV_CSR_ALG2,
                              buffer_non_transpose.data(),
                              handle_ptr->get_stream());
 
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
-                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             HIPSPARSE_OPERATION_NON_TRANSPOSE,
                              alpha.data(),
                              A_T,
                              dual_solution,
                              beta.data(),
                              c,
-                             CUSPARSE_SPMV_CSR_ALG2,
+                             HIPSPARSE_SPMV_CSR_ALG2,
                              buffer_transpose.data(),
                              handle_ptr->get_stream());
 #endif
@@ -362,12 +382,12 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
     A_indices_{op_problem.variables}
 {
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "PDLP cusparse view init" << std::endl;
 #endif
 
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsesetpointermode(
-    handle_ptr_->get_cusparse_handle(), CUSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr_->get_cusparse_handle(), HIPSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
 
   // setup cusparse view
   A.create(op_problem.n_constraints,
@@ -402,13 +422,13 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
   size_t buffer_size_non_transpose = 0;
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv_buffersize(handle_ptr_->get_cusparse_handle(),
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                  HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                   alpha.data(),
                                                   A,
                                                   c,
                                                   beta.data(),
                                                   dual_solution,
-                                                  CUSPARSE_SPMV_CSR_ALG2,
+                                                  HIPSPARSE_SPMV_CSR_ALG2,
                                                   &buffer_size_non_transpose,
                                                   handle_ptr->get_stream()));
   buffer_non_transpose.resize(buffer_size_non_transpose, handle_ptr->get_stream());
@@ -416,13 +436,13 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
   size_t buffer_size_transpose = 0;
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv_buffersize(handle_ptr_->get_cusparse_handle(),
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                  HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                   alpha.data(),
                                                   A_T,
                                                   dual_solution,
                                                   beta.data(),
                                                   c,
-                                                  CUSPARSE_SPMV_CSR_ALG2,
+                                                  HIPSPARSE_SPMV_CSR_ALG2,
                                                   &buffer_size_transpose,
                                                   handle_ptr->get_stream()));
 
@@ -430,24 +450,24 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
 
 #if CUDA_VER_12_4_UP
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
-                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             HIPSPARSE_OPERATION_NON_TRANSPOSE,
                              alpha.data(),
                              A,
                              c,
                              beta.data(),
                              dual_solution,
-                             CUSPARSE_SPMV_CSR_ALG2,
+                             HIPSPARSE_SPMV_CSR_ALG2,
                              buffer_non_transpose.data(),
                              handle_ptr->get_stream());
 
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
-                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             HIPSPARSE_OPERATION_NON_TRANSPOSE,
                              alpha.data(),
                              A_T,
                              dual_solution,
                              beta.data(),
                              c,
-                             CUSPARSE_SPMV_CSR_ALG2,
+                             HIPSPARSE_SPMV_CSR_ALG2,
                              buffer_transpose.data(),
                              handle_ptr->get_stream());
 #endif
@@ -481,12 +501,12 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     A_indices_{existing_cusparse_view.A_indices_}
 {
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "Restart Strategy cusparse view init" << std::endl;
 #endif
 
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsesetpointermode(
-    handle_ptr_->get_cusparse_handle(), CUSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
+    handle_ptr_->get_cusparse_handle(), HIPSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
 
   // Need to reinstanciate the cuSparse views
   // Copying them from the existing cuSparse view is a bad practice and creates segfault post
@@ -517,13 +537,13 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   size_t buffer_size_non_transpose = 0;
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv_buffersize(handle_ptr_->get_cusparse_handle(),
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                  HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                   alpha.data(),
                                                   A,
                                                   c,
                                                   beta.data(),
                                                   dual_solution,
-                                                  CUSPARSE_SPMV_CSR_ALG2,
+                                                  HIPSPARSE_SPMV_CSR_ALG2,
                                                   &buffer_size_non_transpose,
                                                   handle_ptr->get_stream()));
   buffer_non_transpose.resize(buffer_size_non_transpose, handle_ptr->get_stream());
@@ -531,13 +551,13 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   size_t buffer_size_transpose = 0;
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv_buffersize(handle_ptr_->get_cusparse_handle(),
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                  HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                   alpha.data(),
                                                   A_T,
                                                   dual_solution,
                                                   beta.data(),
                                                   c,
-                                                  CUSPARSE_SPMV_CSR_ALG2,
+                                                  HIPSPARSE_SPMV_CSR_ALG2,
                                                   &buffer_size_transpose,
                                                   handle_ptr->get_stream()));
 
@@ -545,24 +565,24 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
 
 #if CUDA_VER_12_4_UP
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
-                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             HIPSPARSE_OPERATION_NON_TRANSPOSE,
                              alpha.data(),
                              A,
                              c,
                              beta.data(),
                              dual_solution,
-                             CUSPARSE_SPMV_CSR_ALG2,
+                             HIPSPARSE_SPMV_CSR_ALG2,
                              buffer_non_transpose.data(),
                              handle_ptr->get_stream());
 
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
-                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             HIPSPARSE_OPERATION_NON_TRANSPOSE,
                              alpha.data(),
                              A_T,
                              dual_solution,
                              beta.data(),
                              c,
-                             CUSPARSE_SPMV_CSR_ALG2,
+                             HIPSPARSE_SPMV_CSR_ALG2,
                              buffer_transpose.data(),
                              handle_ptr->get_stream());
 #endif

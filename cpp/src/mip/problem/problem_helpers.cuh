@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -15,7 +16,7 @@
 #include <raft/linalg/unary_op.cuh>
 #include <utilities/copy_helpers.hpp>
 
-#include <cuda_runtime_api.h>
+#include <hip/hip_runtime_api.h>
 #include <thrust/count.h>
 #include <thrust/functional.h>
 #include <thrust/gather.h>
@@ -223,7 +224,7 @@ static bool check_transpose_validity(const rmm::device_uvector<f_t>& coefficient
       raft::device_span<const i_t>(reverse_offsets.data(), reverse_offsets.size()),
       raft::device_span<const i_t>(reverse_variables.data(), reverse_variables.size()),
       failed.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
   return !failed.value(handle_ptr->get_stream());
 }
 
@@ -314,10 +315,10 @@ static bool check_bounds_sanity(const detail::problem_t<i_t, f_t>& problem)
          check_constraint_bounds_sanity<i_t, f_t>(problem);
 }
 
-static void check_cusparse_status(cusparseStatus_t status)
+static void check_cusparse_status(hipsparseStatus_t status)
 {
-  if (status != CUSPARSE_STATUS_SUCCESS) {
-    throw std::runtime_error("CUSPARSE error: " + std::string(cusparseGetErrorString(status)));
+  if (status != HIPSPARSE_STATUS_SUCCESS) {
+    throw std::runtime_error("CUSPARSE error: " + std::string(hipsparseGetErrorString(status)));
   }
 }
 
@@ -357,21 +358,21 @@ static void csrsort_cusparse(rmm::device_uvector<f_t>& values,
                              const raft::handle_t* handle_ptr)
 {
   auto stream = offsets.stream();
-  cusparseHandle_t handle;
-  cusparseCreate(&handle);
-  cusparseSetStream(handle, stream);
+  hipsparseHandle_t handle;
+  hipsparseCreate(&handle);
+  hipsparseSetStream(handle, stream);
 
   i_t nnz = values.size();
   i_t m   = rows;
   i_t n   = cols;
 
-  cusparseMatDescr_t matA;
-  cusparseCreateMatDescr(&matA);
-  cusparseSetMatIndexBase(matA, CUSPARSE_INDEX_BASE_ZERO);
-  cusparseSetMatType(matA, CUSPARSE_MATRIX_TYPE_GENERAL);
+  hipsparseMatDescr_t matA;
+  hipsparseCreateMatDescr(&matA);
+  hipsparseSetMatIndexBase(matA, HIPSPARSE_INDEX_BASE_ZERO);
+  hipsparseSetMatType(matA, HIPSPARSE_MATRIX_TYPE_GENERAL);
 
   size_t pBufferSizeInBytes = 0;
-  check_cusparse_status(cusparseXcsrsort_bufferSizeExt(
+  check_cusparse_status(hipsparseXcsrsort_bufferSizeExt(
     handle, m, n, nnz, offsets.data(), indices.data(), &pBufferSizeInBytes));
   rmm::device_uvector<uint8_t> pBuffer(pBufferSizeInBytes, stream);
   cuopt_assert(((intptr_t)pBuffer.data() % 128) == 0,
@@ -379,7 +380,7 @@ static void csrsort_cusparse(rmm::device_uvector<f_t>& values,
   rmm::device_uvector<i_t> P(nnz, stream);
   thrust::sequence(handle_ptr->get_thrust_policy(), P.begin(), P.end());
 
-  check_cusparse_status(cusparseXcsrsort(
+  check_cusparse_status(hipsparseXcsrsort(
     handle, m, n, nnz, matA, offsets.data(), indices.data(), P.data(), pBuffer.data()));
 
   // apply the permutation to the values
@@ -389,8 +390,8 @@ static void csrsort_cusparse(rmm::device_uvector<f_t>& values,
   thrust::copy(
     handle_ptr->get_thrust_policy(), values_sorted.begin(), values_sorted.end(), values.begin());
 
-  cusparseDestroyMatDescr(matA);
-  cusparseDestroy(handle);
+  hipsparseDestroyMatDescr(matA);
+  hipsparseDestroy(handle);
 
   check_csr_representation(values, offsets, indices, handle_ptr, cols, rows);
 }

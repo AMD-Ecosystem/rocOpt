@@ -9,6 +9,7 @@
 #include <routing/utilities/check_input.hpp>
 
 #include <cuda/std/functional>
+#include <utilities/copy_helpers.hpp>
 #include <utilities/vector_helpers.cuh>
 
 namespace cuopt {
@@ -46,7 +47,7 @@ void populate_demand_container(data_model_view_t<i_t, f_t> const& data_model,
     fleet_info_.v_capacities_.resize(fleet_size * n_capacity_dimensions, handle_ptr_->get_stream());
 
     // identity functor for assigning i_t to uint16_t
-    cuda::std::identity id;
+    identity_functor id;
     // populate each dimension
     for (i_t dim = 0; dim < n_capacity_dimensions; dim++) {
       // check if pick-up and delivery demands are exact negation of each other

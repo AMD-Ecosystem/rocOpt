@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -7,6 +8,14 @@
 
 #include <cfloat>
 #include <cmath>
+
+#ifdef __HIP_PLATFORM_AMD__
+// Use thrust for argmin on HIP due to hipcub API differences
+#include <thrust/extrema.h>
+#include <thrust/execution_policy.h>
+#else
+#include <cub/device/device_reduce.cuh>
+#endif
 
 #include "optimal_eax_cycles.cuh"
 
@@ -92,7 +101,7 @@ __global__ void find_optimal_position_kernel(
 template <typename i_t, typename f_t>
 __global__ void insert_optimal_rotation_kernel(
   typename solution_t<i_t, f_t, request_t::VRP>::view_t sol,
-  const cub::KeyValuePair<i_t, double>* index_delta_pair,
+  const hipcub::KeyValuePair<i_t, double>* index_delta_pair,
   const typename dimensions_route_t<i_t, f_t, request_t::VRP>::view_t eax_fragment,
   i_t n_rotations)
 {
@@ -144,9 +153,24 @@ void optimal_cycles_t<i_t, f_t, REQUEST>::get_min_delta_and_index(
   adapted_sol_t<i_t, f_t, REQUEST>& sol, i_t num_items)
 {
   raft::common::nvtx::range fun_scope("get_min_delta_and_index");
+#ifdef __HIP_PLATFORM_AMD__
+  // Use thrust::min_element for HIP due to hipcub API differences
+  auto stream = sol.sol.sol_handle->get_stream();
+  auto policy = thrust::hip::par.on(stream);
+  auto min_it = thrust::min_element(policy,
+                                     eax_cycle_delta.data(),
+                                     eax_cycle_delta.data() + num_items);
+  i_t min_idx = thrust::distance(eax_cycle_delta.data(), min_it);
+  // Copy results to index_delta_pair
+  hipcub::KeyValuePair<i_t, double> result;
+  result.key = min_idx;
+  hipMemcpyAsync(&result.value, min_it, sizeof(double), hipMemcpyDeviceToHost, stream);
+  hipStreamSynchronize(stream);
+  hipMemcpyAsync(index_delta_pair.data(), &result, sizeof(result), hipMemcpyHostToDevice, stream);
+#else
   // Determine temporary device storage requirements
   size_t temp_storage_bytes = 0;
-  cub::DeviceReduce::ArgMin(static_cast<void*>(nullptr),
+  hipcub::DeviceReduce::ArgMin(static_cast<void*>(nullptr),
                             temp_storage_bytes,
                             eax_cycle_delta.data(),
                             index_delta_pair.data(),
@@ -157,12 +181,13 @@ void optimal_cycles_t<i_t, f_t, REQUEST>::get_min_delta_and_index(
     d_cub_storage_bytes.resize(temp_storage_bytes, sol.sol.sol_handle->get_stream());
   }
   // Run argmin-reduction
-  cub::DeviceReduce::ArgMin(d_cub_storage_bytes.data(),
+  hipcub::DeviceReduce::ArgMin(d_cub_storage_bytes.data(),
                             temp_storage_bytes,
                             eax_cycle_delta.data(),
                             index_delta_pair.data(),
                             num_items,
                             sol.sol.sol_handle->get_stream());
+#endif
 }
 
 template <typename i_t, typename f_t, request_t REQUEST>

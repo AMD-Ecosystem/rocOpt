@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -10,13 +11,20 @@
 #include <routing/util_kernels/top_k.cuh>
 #include <routing/utilities/test_utilities.hpp>
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hipcub/hipcub.hpp>
+#include <hipcub/block/block_load.hpp>
+#include <hipcub/block/block_radix_sort.hpp>
+#include <hipcub/block/block_shuffle.hpp>
+#include <hipcub/block/block_store.hpp>
+#else
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_radix_sort.cuh>
 #include <cub/block/block_shuffle.cuh>
 #include <cub/block/block_store.cuh>
+#endif
 
 #include <thrust/sort.h>
-#include <cub/cub.cuh>
 
 #include <algorithm>
 #include <iostream>
@@ -164,7 +172,7 @@ class top_cand_test_t : public routing_test_t<i_t, f_t>, public ::testing::TestW
                                                                    cuopt::make_span(output_cost),
                                                                    cuopt::make_span(out_index));
     this->stream_view_.synchronize();
-    RAFT_CUDA_TRY(cudaGetLastError());
+    RAFT_CUDA_TRY(hipGetLastError());
   }
 
   void verify_top_k(const std::vector<double>& h_input_cost,
@@ -224,7 +232,7 @@ class top_cand_test_t : public routing_test_t<i_t, f_t>, public ::testing::TestW
     auto num_segments = segment_marker.size() - 1;
     auto num_items    = input_cost.size();  // width*width
     size_t tmp_storage_bytes;
-    cub::DeviceSegmentedSort::SortPairs(static_cast<void*>(nullptr),
+    hipcub::DeviceSegmentedSort::SortPairs(static_cast<void*>(nullptr),
                                         tmp_storage_bytes,
                                         d_input_cost.data(),
                                         d_output_cost.data(),
@@ -242,7 +250,7 @@ class top_cand_test_t : public routing_test_t<i_t, f_t>, public ::testing::TestW
     {
       time_it t(&elapsed_ms);
       for (int i = 0; i < iter; ++i) {
-        cub::DeviceSegmentedSort::SortPairs(d_cub_storage_bytes.data(),
+        hipcub::DeviceSegmentedSort::SortPairs(d_cub_storage_bytes.data(),
                                             tmp_storage_bytes,
                                             d_input_cost.data(),
                                             d_output_cost.data(),

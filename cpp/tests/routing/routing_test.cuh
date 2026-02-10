@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -30,7 +31,7 @@
 #include <thrust/sequence.h>
 #include <cuda/std/functional>
 
-#include <cuda_profiler_api.h>
+#include <hip/hip_runtime_api.h>
 
 #include <filesystem>
 #include <iostream>

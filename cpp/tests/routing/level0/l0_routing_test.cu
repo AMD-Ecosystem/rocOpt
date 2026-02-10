@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -410,7 +411,7 @@ class routing_retail_test_t : public base_test_t<i_t, f_t>,
                         d_int_skip_first_trip.end(),
                         d_skip_first_trip.begin(),
                         id);
-      RAFT_CUDA_TRY(cudaStreamSynchronize(this->stream_view_.value()));
+      RAFT_CUDA_TRY(hipStreamSynchronize(this->stream_view_.value()));
       data_model.set_drop_return_trips(d_drop_return_trip.data());
       data_model.set_skip_first_trips(d_skip_first_trip.data());
     }

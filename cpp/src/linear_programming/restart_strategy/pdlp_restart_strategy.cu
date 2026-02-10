@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -37,9 +38,9 @@
 #include <thrust/sort.h>
 #include <thrust/transform_reduce.h>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
-#include <cooperative_groups.h>
+#include <hip/hip_cooperative_groups.h>
 
 #include <cmath>
 
@@ -50,37 +51,37 @@ namespace cuopt::linear_programming::detail {
 void set_restart_hyper_parameters(rmm::cuda_stream_view stream_view)
 {
   RAFT_CUDA_TRY(
-    cudaMemcpyToSymbolAsync(pdlp_hyper_params::default_primal_weight_update_smoothing,
+    hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::default_primal_weight_update_smoothing),
                             &pdlp_hyper_params::host_default_primal_weight_update_smoothing,
                             sizeof(double),
                             0,
-                            cudaMemcpyHostToDevice,
+                            hipMemcpyHostToDevice,
                             stream_view));
   RAFT_CUDA_TRY(
-    cudaMemcpyToSymbolAsync(pdlp_hyper_params::default_sufficient_reduction_for_restart,
+    hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::default_sufficient_reduction_for_restart),
                             &pdlp_hyper_params::host_default_sufficient_reduction_for_restart,
                             sizeof(double),
                             0,
-                            cudaMemcpyHostToDevice,
+                            hipMemcpyHostToDevice,
                             stream_view));
   RAFT_CUDA_TRY(
-    cudaMemcpyToSymbolAsync(pdlp_hyper_params::default_necessary_reduction_for_restart,
+    hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::default_necessary_reduction_for_restart),
                             &pdlp_hyper_params::host_default_necessary_reduction_for_restart,
                             sizeof(double),
                             0,
-                            cudaMemcpyHostToDevice,
+                            hipMemcpyHostToDevice,
                             stream_view));
-  RAFT_CUDA_TRY(cudaMemcpyToSymbolAsync(pdlp_hyper_params::primal_distance_smoothing,
+  RAFT_CUDA_TRY(hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::primal_distance_smoothing),
                                         &pdlp_hyper_params::host_primal_distance_smoothing,
                                         sizeof(double),
                                         0,
-                                        cudaMemcpyHostToDevice,
+                                        hipMemcpyHostToDevice,
                                         stream_view));
-  RAFT_CUDA_TRY(cudaMemcpyToSymbolAsync(pdlp_hyper_params::dual_distance_smoothing,
+  RAFT_CUDA_TRY(hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::dual_distance_smoothing),
                                         &pdlp_hyper_params::host_dual_distance_smoothing,
                                         sizeof(double),
                                         0,
-                                        cudaMemcpyHostToDevice,
+                                        hipMemcpyHostToDevice,
                                         stream_view));
 }
 
@@ -212,11 +213,11 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
   raft::common::nvtx::range fun_scope("Initializing restart strategy");
 
   // Init the vectors
-  RAFT_CUDA_TRY(cudaMemsetAsync(last_restart_duality_gap_.primal_solution_.data(),
+  RAFT_CUDA_TRY(hipMemsetAsync(last_restart_duality_gap_.primal_solution_.data(),
                                 0.0,
                                 sizeof(f_t) * primal_size_h_,
                                 stream_view_));
-  RAFT_CUDA_TRY(cudaMemsetAsync(last_restart_duality_gap_.dual_solution_.data(),
+  RAFT_CUDA_TRY(hipMemsetAsync(last_restart_duality_gap_.dual_solution_.data(),
                                 0.0,
                                 sizeof(f_t) * dual_size_h_,
                                 stream_view_));
@@ -241,15 +242,15 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
     // Check that device support CooperativeLaunch
     int dev                = 0;
     int supportsCoopLaunch = 0;
-    RAFT_CUDA_TRY(cudaGetDevice(&dev));
-    RAFT_CUDA_TRY(cudaDeviceGetAttribute(&supportsCoopLaunch, cudaDevAttrCooperativeLaunch, dev));
+    RAFT_CUDA_TRY(hipGetDevice(&dev));
+    RAFT_CUDA_TRY(hipDeviceGetAttribute(&supportsCoopLaunch, hipDeviceAttributeCooperativeLaunch, dev));
     EXE_CUOPT_EXPECTS(supportsCoopLaunch == 1, "Current device does not support CooperativeLaunch");
     /// Compute max number of blocks for live kernel
     int numBlocksPerSm       = 0;
     constexpr int numThreads = 128;
-    cudaDeviceProp deviceProp;
-    RAFT_CUDA_TRY(cudaGetDeviceProperties(&deviceProp, dev));
-    RAFT_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    hipDeviceProp_t deviceProp;
+    RAFT_CUDA_TRY(hipGetDeviceProperties(&deviceProp, dev));
+    RAFT_CUDA_TRY(hipOccupancyMaxActiveBlocksPerMultiprocessor(
       &numBlocksPerSm,
       solve_bound_constrained_trust_region_kernel<i_t, f_t, numThreads>,
       numThreads,
@@ -484,7 +485,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   i_t total_number_of_iterations)
 {
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "Running KKT scheme" << std::endl;
 #endif
   // For KKT restart we need current and average convergeance information:
@@ -492,7 +493,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   // Both of them are computed before to know if optimality has been reached
 
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "  Current convergeance information:"
             << "    l2_primal_residual="
             << current_convergence_information.get_l2_primal_residual().value(stream_view_)
@@ -536,7 +537,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   }
 
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "    current_kkt_score=" << current_kkt_score << "\n"
             << "    average_kkt_score=" << average_kkt_score << "\n"
             << "    candidate_kkt_score=" << candidate_kkt_score << "\n"
@@ -552,7 +553,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
     // This is necessary to compute the new primal weight
 
 #ifdef PDLP_DEBUG_MODE
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     std::cout << "  Doing KKT restart" << std::endl;
 #endif
 
@@ -561,7 +562,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
     // containers)
     if (restart_to_average && !pdlp_hyper_params::never_restart_to_average) {
 #ifdef PDLP_DEBUG_MODE
-      RAFT_CUDA_TRY(cudaDeviceSynchronize());
+      RAFT_CUDA_TRY(hipDeviceSynchronize());
       std::cout << "    KKT restart to average" << std::endl;
 #endif
 
@@ -576,7 +577,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
       candidate_duality_gap_ = &avg_duality_gap_;
     } else {
 #ifdef PDLP_DEBUG_MODE
-      RAFT_CUDA_TRY(cudaDeviceSynchronize());
+      RAFT_CUDA_TRY(hipDeviceSynchronize());
       std::cout << "    KKT no restart to average" << std::endl;
 #endif
       raft::copy(current_duality_gap_.primal_solution_.data(),
@@ -629,7 +630,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
     last_restart_kkt_score = candidate_kkt_score;
   } else {
 #ifdef PDLP_DEBUG_MODE
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     std::cout << "KKT conditions not met for a restart" << std::endl;
 #endif
   }
@@ -638,7 +639,7 @@ bool pdlp_restart_strategy_t<i_t, f_t>::run_kkt_restart(
   last_candidate_kkt_score = candidate_kkt_score;
 
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "last_restart_kkt_score=" << last_restart_kkt_score
             << "last_candidate_kkt_score=" << last_candidate_kkt_score << std::endl;
 #endif
@@ -964,7 +965,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_new_primal_weight(
                                                                         step_size.data(),
                                                                         primal_step_size.data(),
                                                                         dual_step_size.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 }
 
 template <typename i_t, typename f_t>
@@ -1042,7 +1043,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::update_last_restart_information(
 
   compute_distance_traveled_last_restart_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(
     duality_gap.view(), primal_weight.data(), last_restart_duality_gap_.distance_traveled_.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   raft::copy(last_restart_duality_gap_.primal_solution_.data(),
              duality_gap.primal_solution_.data(),
@@ -1077,7 +1078,7 @@ i_t pdlp_restart_strategy_t<i_t, f_t>::pick_restart_candidate()
 {
   pick_restart_candidate_kernel<i_t, f_t>
     <<<1, 1, 0, stream_view_>>>(avg_duality_gap_.view(), current_duality_gap_.view(), this->view());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   i_t restart_to_average_h = candidate_is_avg_.value(stream_view_);
   if (restart_to_average_h) {
@@ -1086,7 +1087,7 @@ i_t pdlp_restart_strategy_t<i_t, f_t>::pick_restart_candidate()
     candidate_duality_gap_ = &current_duality_gap_;
   }
 
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
   return restart_to_average_h;
 }
 
@@ -1142,14 +1143,14 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_do_adaptive_restart_normalized_du
     <<<1, 1, 0, stream_view_>>>(candidate_duality_gap.view(),
                                 primal_weight.data(),
                                 last_restart_duality_gap_.distance_traveled_.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   bound_optimal_objective(
     last_restart_duality_gap_cusparse_view_, last_restart_duality_gap_, tmp_primal, tmp_dual);
 
   adaptive_restart_triggered<i_t, f_t><<<1, 1, 0, stream_view_>>>(
     candidate_duality_gap.view(), last_restart_duality_gap_.view(), this->view());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   restart = restart_triggered_.value(stream_view_);
 }
@@ -1245,7 +1246,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_localized_duality_gaps(
 
   compute_normalized_gaps_kernel<i_t, f_t>
     <<<1, 1, 0, stream_view_>>>(avg_duality_gap_.view(), current_duality_gap_.view());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 }
 
 template <typename i_t, typename f_t>
@@ -1666,9 +1667,9 @@ void pdlp_restart_strategy_t<i_t, f_t>::solve_bound_constrained_trust_region(
     const f_t zero_float = f_t(0.0);
     high_radius_squared_.set_value_async(zero_float, stream_view_);
     low_radius_squared_.set_value_async(zero_float, stream_view_);
-    RAFT_CUDA_TRY(cudaMemsetAsync(
+    RAFT_CUDA_TRY(hipMemsetAsync(
       direction_full_.data(), 0, sizeof(f_t) * (primal_size_h_ + dual_size_h_), stream_view_));
-    RAFT_CUDA_TRY(cudaMemsetAsync(
+    RAFT_CUDA_TRY(hipMemsetAsync(
       threshold_.data(), 0, sizeof(f_t) * (primal_size_h_ + dual_size_h_), stream_view_));
     /* ----- */
 
@@ -1677,7 +1678,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::solve_bound_constrained_trust_region(
 
     // Copying primal / dual bound before sorting them according to threshold
     using f_t2 = typename type_2<f_t>::type;
-    cub::DeviceTransform::Transform(
+    hipcub::DeviceTransform::Transform(
       problem_ptr->variable_bounds.data(),
       thrust::make_zip_iterator(thrust::make_tuple(lower_bound_.data(), upper_bound_.data())),
       primal_size_h_,
@@ -1817,7 +1818,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::solve_bound_constrained_trust_region(
     // numBlocksPerSm
     dim3 dimGrid(shared_live_kernel_accumulator_.size(), 1, 1);
     // Compute the median for the join problem, while loop is inside the live kernel
-    RAFT_CUDA_TRY(cudaLaunchCooperativeKernel(
+    RAFT_CUDA_TRY(hipLaunchCooperativeKernel(
       (void*)solve_bound_constrained_trust_region_kernel<i_t, f_t, numThreads>,
       dimGrid,
       dimBlock,
@@ -1840,7 +1841,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::solve_bound_constrained_trust_region(
     // {
     target_threshold_determination_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(
       this->view(), duality_gap.distance_traveled_.data(), max_threshold, max_threshold);
-    RAFT_CUDA_TRY(cudaPeekAtLastError());
+    RAFT_CUDA_TRY(hipPeekAtLastError());
     // }
 
     // Compute x (the solution which is defined by moving each component test_threshold *
@@ -1861,9 +1862,11 @@ void pdlp_restart_strategy_t<i_t, f_t>::solve_bound_constrained_trust_region(
                            stream_view_);
     // project by max(min(x[i], upperbound[i]),lowerbound[i]) for primal part
     using f_t2 = typename type_2<f_t>::type;
-    cub::DeviceTransform::Transform(cuda::std::make_tuple(duality_gap.primal_solution_tr_.data(),
-                                                          problem_ptr->variable_bounds.data()),
-                                    duality_gap.primal_solution_tr_.data(),
+    hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        duality_gap.primal_solution_tr_.data(),
+        problem_ptr->variable_bounds.data())),
+      duality_gap.primal_solution_tr_.data(),
                                     primal_size_h_,
                                     clamp<f_t, f_t2>(),
                                     stream_view_.value());
@@ -1939,7 +1942,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_distance_traveled_from_last_rest
   // + dual_distance * 0.5 / primal_weight
   compute_distance_traveled_last_restart_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(
     duality_gap.view(), primal_weight.data(), duality_gap.distance_traveled_.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 }
 
 template <typename i_t, typename f_t>
@@ -1960,13 +1963,13 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_primal_gradient(
              stream_view_);
 
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                        reusable_device_scalar_value_neg_1_.data(),
                                                        cusparse_view.A_T,
                                                        cusparse_view.dual_solution,
                                                        reusable_device_scalar_value_1_.data(),
                                                        cusparse_view.primal_gradient,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
+                                                       HIPSPARSE_SPMV_CSR_ALG2,
                                                        (f_t*)cusparse_view.buffer_transpose.data(),
                                                        stream_view_));
 }
@@ -2028,13 +2031,13 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_dual_gradient(
   // gradient constains primal_product
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                        reusable_device_scalar_value_1_.data(),
                                        cusparse_view.A,
                                        cusparse_view.primal_solution,
                                        reusable_device_scalar_value_0_.data(),
                                        cusparse_view.dual_gradient,
-                                       CUSPARSE_SPMV_CSR_ALG2,
+                                       HIPSPARSE_SPMV_CSR_ALG2,
                                        (f_t*)cusparse_view.buffer_non_transpose.data(),
                                        stream_view_));
 
@@ -2085,13 +2088,13 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_lagrangian_value(
 
   // third term, let beta be 0 to not add what is in tmp_primal, compute it and compute dot
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                        reusable_device_scalar_value_1_.data(),
                                                        cusparse_view.A_T,
                                                        cusparse_view.dual_solution,
                                                        reusable_device_scalar_value_0_.data(),
                                                        cusparse_view.tmp_primal,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
+                                                       HIPSPARSE_SPMV_CSR_ALG2,
                                                        (f_t*)cusparse_view.buffer_transpose.data(),
                                                        stream_view_));
 

@@ -10,6 +10,12 @@
 #include <routing/adapters/adapted_sol.cuh>
 #include <routing/diversity/macros.hpp>
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hipcub/util_type.hpp>
+#else
+#include <cub/util_type.cuh>
+#endif
+
 #include <array>
 
 namespace cuopt::routing::detail {
@@ -45,7 +51,7 @@ struct optimal_cycles_t {
   rmm::device_uvector<NodeInfo<>> d_cycle;
   rmm::device_uvector<double> eax_cycle_delta;
   rmm::device_uvector<std::byte> d_cub_storage_bytes;
-  rmm::device_scalar<cub::KeyValuePair<i_t, double>> index_delta_pair;
+  rmm::device_scalar<hipcub::KeyValuePair<i_t, double>> index_delta_pair;
   dimensions_route_t<i_t, f_t, REQUEST> eax_fragment;
 };
 

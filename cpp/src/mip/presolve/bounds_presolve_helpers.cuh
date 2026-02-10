@@ -11,7 +11,7 @@
 #include <thrust/tuple.h>
 #include <utilities/device_utils.cuh>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 #include "bounds_update_data.cuh"
 

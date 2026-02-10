@@ -198,11 +198,22 @@ mkdir tmp
 cd tmp
 # Loop through URLs with error handling
 for url in "${URLS[@]}"; do
-    # Try up to 3 times with continue option
-    wget -4 --tries=3 --continue --progress=dot:mega --retry-connrefused "${url}" || {
-        echo "Failed to download: ${url}"
-        continue
-    }
+    filename=$(basename "${url}")
+    # Try wget first, fall back to curl
+    if command -v wget &>/dev/null; then
+        wget -4 --tries=3 --continue --progress=dot:mega --retry-connrefused "${url}" || {
+            echo "Failed to download: ${url}"
+            continue
+        }
+    elif command -v curl &>/dev/null; then
+        curl -L --retry 3 --progress-bar -o "${filename}" "${url}" || {
+            echo "Failed to download: ${url}"
+            continue
+        }
+    else
+        echo "Error: neither wget nor curl found. Install one of them."
+        exit 1
+    fi
 done
 cd ..
 

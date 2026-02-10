@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -287,7 +288,7 @@ void solution_t<i_t, f_t, REQUEST>::global_runtime_checks(
 #ifdef DEBUG_RUNTIME_CHECKS
   // Enable this print for debugging
   std::cout << "Starting checks in: " << where << std::endl;
-  cudaDeviceSynchronize();
+  hipDeviceSynchronize();
 #endif
 
   cuopt_assert(global_runtime_checks_(
@@ -295,7 +296,7 @@ void solution_t<i_t, f_t, REQUEST>::global_runtime_checks(
                "_");
 
 #ifdef DEBUG_RUNTIME_CHECKS
-  cudaDeviceSynchronize();
+  hipDeviceSynchronize();
   std::cout << "Done checks in: " << where << std::endl;
 #endif
 }

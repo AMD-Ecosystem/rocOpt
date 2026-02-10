@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -12,7 +13,7 @@
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 #include <deque>
 #include <unordered_set>
@@ -70,7 +71,7 @@ void ExactCycleFinder<i_t, f_t, max_routes>::sort_cycle_costs_by_key(int n_items
   std::size_t temp_storage_bytes = 0;
   int begin_bit                  = 0;
   int end_bit                    = sizeof(double) * 8;
-  cub::DeviceRadixSort::SortPairs(static_cast<void*>(nullptr),
+  hipcub::DeviceRadixSort::SortPairs(static_cast<void*>(nullptr),
                                   temp_storage_bytes,
                                   copy_cost.data(),
                                   cycle_candidates.costs.data(),
@@ -86,7 +87,7 @@ void ExactCycleFinder<i_t, f_t, max_routes>::sort_cycle_costs_by_key(int n_items
     d_cub_storage_bytes.resize(temp_storage_bytes, handle_ptr->get_stream());
   }
   // Run sorting operation
-  cub::DeviceRadixSort::SortPairs(d_cub_storage_bytes.data(),
+  hipcub::DeviceRadixSort::SortPairs(d_cub_storage_bytes.data(),
                                   temp_storage_bytes,
                                   copy_cost.data(),
                                   cycle_candidates.costs.data(),
@@ -294,7 +295,7 @@ void ExactCycleFinder<i_t, f_t, max_routes>::sort_occupied(int level,
   cuopt_assert(check_occupied_head(level, graph), "");
 
   size_t temp_storage_bytes = 0;
-  cub::DeviceMergeSort::SortKeys(
+  hipcub::DeviceMergeSort::SortKeys(
     static_cast<void*>(nullptr),
     temp_storage_bytes,
     curr_map.occupied_indices.data(),
@@ -306,7 +307,7 @@ void ExactCycleFinder<i_t, f_t, max_routes>::sort_occupied(int level,
     d_cub_storage_bytes.resize(temp_storage_bytes, handle_ptr->get_stream());
   }
   // Run sorting operation
-  cub::DeviceMergeSort::SortKeys(
+  hipcub::DeviceMergeSort::SortKeys(
     d_cub_storage_bytes.data(),
     temp_storage_bytes,
     curr_map.occupied_indices.data(),
@@ -316,7 +317,7 @@ void ExactCycleFinder<i_t, f_t, max_routes>::sort_occupied(int level,
 
   // do an exclusive scan for the offsets of heads, this will be used in kernels
   temp_storage_bytes = 0;
-  cub::DeviceScan::ExclusiveSum(static_cast<void*>(nullptr),
+  hipcub::DeviceScan::ExclusiveSum(static_cast<void*>(nullptr),
                                 temp_storage_bytes,
                                 curr_map.size_per_head.data(),
                                 curr_map.size_per_head.data(),
@@ -327,7 +328,7 @@ void ExactCycleFinder<i_t, f_t, max_routes>::sort_occupied(int level,
     d_cub_storage_bytes.resize(temp_storage_bytes, handle_ptr->get_stream());
   }
   // Run exclusive prefix sum
-  cub::DeviceScan::ExclusiveSum(d_cub_storage_bytes.data(),
+  hipcub::DeviceScan::ExclusiveSum(d_cub_storage_bytes.data(),
                                 temp_storage_bytes,
                                 curr_map.size_per_head.data(),
                                 curr_map.size_per_head.data(),

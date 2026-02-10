@@ -6,6 +6,8 @@
 /* clang-format on */
 
 #pragma once
+#include <hip/hip_runtime.h>
+
 
 namespace cuopt::linear_programming::detail {
 

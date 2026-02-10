@@ -15,7 +15,30 @@
 
 #include <rmm/device_scalar.hpp>
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hipsparse/hipsparse.h>
+// Map cusparse types to hipsparse types
+#define cusparseSpMatDescr_t hipsparseSpMatDescr_t
+#define cusparseSpGEMMDescr_t hipsparseSpGEMMDescr_t
+#define cusparseSpGEMM_destroyDescr hipsparseSpGEMM_destroyDescr
+#define cusparseDestroySpMat hipsparseDestroySpMat
+#define cusparseStatus_t hipsparseStatus_t
+#define CUSPARSE_STATUS_SUCCESS HIPSPARSE_STATUS_SUCCESS
+// Error handling macro for hipsparse
+#define CUOPT_CUSPARSE_TRY_NO_THROW(call) \
+  do { \
+    hipsparseStatus_t status = (call); \
+    (void)status; \
+  } while (0)
+#else
 #include <cusparse_v2.h>
+// Error handling macro for cusparse
+#define CUOPT_CUSPARSE_TRY_NO_THROW(call) \
+  do { \
+    cusparseStatus_t status = (call); \
+    (void)status; \
+  } while (0)
+#endif
 
 namespace cuopt::linear_programming::dual_simplex {
 

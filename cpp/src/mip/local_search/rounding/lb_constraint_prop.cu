@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -572,7 +573,7 @@ void sort_subsections(raft::device_span<i_t> vars,
   rmm::device_uvector<f_t> input_random_vec(random_vector, handle_ptr->get_stream());
   rmm::device_uvector<i_t> input_vars(vars.size(), handle_ptr->get_stream());
   raft::copy(input_vars.data(), vars.data(), vars.size(), handle_ptr->get_stream());
-  cub::DeviceSegmentedSort::SortPairs(d_temp_storage.data(),
+  hipcub::DeviceSegmentedSort::SortPairs(d_temp_storage.data(),
                                       temp_storage_bytes,
                                       input_random_vec.data(),
                                       random_vector.data(),
@@ -588,7 +589,7 @@ void sort_subsections(raft::device_span<i_t> vars,
   d_temp_storage.resize(temp_storage_bytes, handle_ptr->get_stream());
 
   // Run sorting operation
-  cub::DeviceSegmentedSort::SortPairs(d_temp_storage.data(),
+  hipcub::DeviceSegmentedSort::SortPairs(d_temp_storage.data(),
                                       temp_storage_bytes,
                                       input_random_vec.data(),
                                       random_vector.data(),

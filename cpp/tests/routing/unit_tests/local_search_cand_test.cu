@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -299,7 +300,7 @@ class routing_ges_test_t : public ::testing::TestWithParam<std::tuple<bool, test
     detail::get_solution_from_assignment(sol_pool_vec[0], simple_assignment, problem);
     ges_solver_t<i_t, f_t, REQUEST> ges_solver(data_model, 1, this->n_orders / 5);
     ges_solver.pool_allocator.solution_pool = std::move(sol_pool_vec);
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     const i_t max_iterations = 1;
 
     this->hr_timer_.start("GES solver");
@@ -310,7 +311,7 @@ class routing_ges_test_t : public ::testing::TestWithParam<std::tuple<bool, test
     resource.ls.run_best_local_search(sol, false, false);
     ges_solver.pool_allocator.resource_pool->release(index);
     ges_solver.pool_allocator.sync_all_streams();
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     this->hr_timer_.stop();
     this->hr_timer_.display(std::cout);
   }
@@ -329,21 +330,21 @@ class routing_ges_test_t : public ::testing::TestWithParam<std::tuple<bool, test
     // cuopt::routing::solver_t solver(data_model, settings);
     auto routing_solution = base_test_t<i_t, f_t>::solve(data_model, settings);
     host_assignment_t<i_t> h_routing_solution(routing_solution);
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     detail::problem_t<i_t, f_t> problem(data_model_const);
 
     ges_solver_t<i_t, f_t, REQUEST> ges_solver(data_model_const, 1, this->n_orders / 5);
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     printf("solver created\n");
     detail::get_solution_from_assignment(
       ges_solver.pool_allocator.solution_pool[0], routing_solution, problem);
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     printf("assignment received\n");
     ges_solver.pool_allocator.solution_pool[0].global_runtime_checks(
       false, false, "local_search_test_1");
     const i_t max_iterations =
       this->test_type == test_t::ONLY_CYCLE ? 1 : std::numeric_limits<i_t>::max();
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     auto& sol = ges_solver.pool_allocator.solution_pool[0];
     sol.global_runtime_checks(false, false, "local_search_test_2");
     printf("test start\n");
@@ -376,10 +377,10 @@ class routing_ges_test_t : public ::testing::TestWithParam<std::tuple<bool, test
       bool compute_initial_solution = false;
       ges_solver.compute_ges_solution(compute_initial_solution);
     }
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
 
     auto assignment = ges_solver.get_ges_assignment(ges_solver.pool_allocator.solution_pool[0]);
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     // this->cycles = ges_solver.local_search.cycles;
     // compare generated graph (single iteration single node) to cpu solution
     // this might move to some other test case

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -18,6 +19,31 @@
 #include <cuda/std/functional>
 
 namespace cuopt {
+
+// Simple identity functor for use with thrust algorithms (const-correct)
+// Used for both CUDA and HIP for consistency
+struct identity_functor {
+  template <typename T>
+  __host__ __device__ const T& operator()(const T& x) const { return x; }
+};
+
+#ifdef __HIP_PLATFORM_AMD__
+// Maximum functor for HIP compatibility (replaces cuda::maximum)
+struct maximum_functor {
+  template <typename T>
+  __host__ __device__ T operator()(const T& a, const T& b) const { 
+    return (a > b) ? a : b; 
+  }
+};
+
+// Minimum functor for HIP compatibility (replaces cuda::minimum)
+struct minimum_functor {
+  template <typename T>
+  __host__ __device__ T operator()(const T& a, const T& b) const { 
+    return (a < b) ? a : b; 
+  }
+};
+#endif // __HIP_PLATFORM_AMD__
 
 template <typename T>
 struct type_2 {
@@ -138,7 +164,7 @@ inline auto host_copy(bool const* device_ptr, size_t size, rmm::cuda_stream_view
   if (!device_ptr) { return std::vector<bool>(0); }
   rmm::device_uvector<int> d_int_vec(size, stream_view);
   d_int_vec.resize(size, stream_view);
-  cuda::std::identity id;
+  identity_functor id;
   thrust::transform(
     rmm::exec_policy(stream_view), device_ptr, device_ptr + size, d_int_vec.begin(), id);
   auto h_int_vec = host_copy(d_int_vec.data(), d_int_vec.size(), stream_view);
@@ -267,7 +293,7 @@ inline auto device_copy(std::vector<bool> const& host_vec, rmm::cuda_stream_view
                     device_vec_int.begin(),
                     device_vec_int.end(),
                     device_vec.begin(),
-                    cuda::std::identity());
+                    identity_functor());
 
   return device_vec;
 }

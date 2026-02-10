@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -13,8 +14,16 @@
 #include "../solution/solution.cuh"
 #include "found_solution.cuh"
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hipcub/block/block_merge_sort.hpp>
+#include <hipcub/block/block_scan.hpp>
+// HIP requires 64-bit mask for ballot_sync with 64-wide wavefronts
+#define CDI_FULL_WARP_MASK 0xffffffffffffffffull
+#else
 #include <cub/block/block_merge_sort.cuh>
 #include <cub/block/block_scan.cuh>
+#define CDI_FULL_WARP_MASK 0xffffffffu
+#endif
 #include <utilities/seed_generator.cuh>
 
 namespace cuopt {
@@ -37,7 +46,7 @@ DI void sort_to_delete(i_t* to_delete, i_t fragment_size)
   // Suppose fragment_size * 2 will never exceed blockDim
   cuopt_assert((fragment_size * request_info_t<i_t, REQUEST>::size()) <= blockDim.x,
                "Support only fragment size up to blockDim");
-  typedef cub::BlockMergeSort<i_t, BLOCK_SIZE, 1> BlockMergeSort;
+  typedef hipcub::BlockMergeSort<i_t, BLOCK_SIZE, 1> BlockMergeSort;
   __shared__ typename BlockMergeSort::TempStorage temp_storage_shuffle;
   i_t thread_val[1];
   if (threadIdx.x < fragment_size * request_info_t<i_t, REQUEST>::size())
@@ -84,16 +93,28 @@ DI i_t binary_block_reduce(int val)
 {
   static_assert(BLOCK_SIZE <= 1024);
   cuopt_assert(val == 0 || val == 1, "Binary block reduce only acceptes 0 or 1");
+#ifdef __HIP_PLATFORM_AMD__
+  // HIP has 64-wide wavefronts, ensure at least 1 element
+  static constexpr int NUM_WARPS = (BLOCK_SIZE / raft::WarpSize) > 0 ? (BLOCK_SIZE / raft::WarpSize) : 1;
+  __shared__ i_t shared[NUM_WARPS];
+  const uint64_t mask                 = __ballot_sync(CDI_FULL_WARP_MASK, val);
+  const uint32_t n_deletable_requests = __popcll(mask);
+#else
   __shared__ i_t shared[BLOCK_SIZE / raft::WarpSize];
-  const uint32_t mask                 = __ballot_sync(~0, val);
+  const uint32_t mask                 = __ballot_sync(CDI_FULL_WARP_MASK, val);
   const uint32_t n_deletable_requests = __popc(mask);
+#endif
 
   // Each first thread of the warp
   if (threadIdx.x % raft::WarpSize == 0)
     shared[threadIdx.x / raft::WarpSize] = n_deletable_requests;
   __syncthreads();
 
+#ifdef __HIP_PLATFORM_AMD__
+  val = (threadIdx.x < NUM_WARPS) ? shared[threadIdx.x] : 0;
+#else
   val = (threadIdx.x < BLOCK_SIZE / raft::WarpSize) ? shared[threadIdx.x] : 0;
+#endif
 
   // Warp reduce on shared array
   if (threadIdx.x < raft::WarpSize)
@@ -305,7 +326,7 @@ DI void find_all_delivery_insertions(typename solution_t<i_t, f_t, REQUEST>::vie
       cuopt_assert(thread_data == 0 || thread_data == 1, "Thread data value should only be 0 or 1");
 
       // Inclusive scan
-      typedef cub::BlockScan<i_t, BLOCK_SIZE> BlockScan;
+      typedef hipcub::BlockScan<i_t, BLOCK_SIZE> BlockScan;
       __shared__ typename BlockScan::TempStorage temp_storage;
       BlockScan(temp_storage).InclusiveSum(thread_data, thread_data);
       // TODO : needed ?

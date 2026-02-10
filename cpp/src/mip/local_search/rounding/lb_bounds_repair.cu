@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -12,6 +13,7 @@
 #include <thrust/sort.h>
 #include <mip/logger.cuh>
 #include <mip/mip_constants.hpp>
+#include <utilities/copy_helpers.hpp>
 #include <utilities/seed_generator.cuh>
 
 namespace cuopt::linear_programming::detail {
@@ -92,7 +94,7 @@ std::tuple<f_t, i_t> lb_bounds_repair_t<i_t, f_t>::get_ii_violation(
                               thrust::make_counting_iterator(0) + problem.n_constraints,
                               violated_cstr_map.data(),
                               violated_constraints.data(),
-                              cuda::std::identity{});
+                              identity_functor{});
   i_t n_violated_cstr = iter - violated_constraints.data();
   f_t total_violation = total_vio.value(handle_ptr->get_stream());
   CUOPT_LOG_TRACE(

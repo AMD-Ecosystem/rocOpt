@@ -24,7 +24,7 @@ inline std::pair<dim3, dim3> get_launch_dims_max_occupancy(void* kernel_address,
                                                            const raft::handle_t* handle_ptr)
 {
   int num_blocks_per_sm = 0;
-  cudaOccupancyMaxActiveBlocksPerMultiprocessor(&num_blocks_per_sm, kernel_address, TPB, 0);
+  RAFT_CUDA_TRY(hipOccupancyMaxActiveBlocksPerMultiprocessor(&num_blocks_per_sm, kernel_address, TPB, 0));
   int n_blocks = handle_ptr->get_device_properties().multiProcessorCount * num_blocks_per_sm;
   dim3 dim_block(TPB, 1, 1);
   dim3 dim_grid(n_blocks, 1, 1);

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -19,7 +20,7 @@
 
 #include <thrust/count.h>
 
-#include <cuda_profiler_api.h>
+#include <hip/hip_runtime_api.h>
 
 #include <algorithm>
 
@@ -809,6 +810,6 @@ template class optimization_problem_t<int, double>;
 #endif
 
 // TODO current raft to cusparse wrappers only support int64_t
-// can be CUSPARSE_INDEX_16U, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_64I
+// can be HIPSPARSE_INDEX_16U, HIPSPARSE_INDEX_32I, HIPSPARSE_INDEX_64I
 
 }  // namespace cuopt::linear_programming

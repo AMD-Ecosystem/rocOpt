@@ -10,7 +10,11 @@
 
 #include <linear_programming/cusparse_view.hpp>
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hipsparse/hipsparse.h>
+#else
 #include <cusparse_v2.h>
+#endif
 
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>

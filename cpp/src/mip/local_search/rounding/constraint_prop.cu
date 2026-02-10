@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -76,7 +77,7 @@ void sort_subsections(raft::device_span<i_t> vars,
   rmm::device_uvector<f_t> input_random_vec(random_vector, handle_ptr->get_stream());
   rmm::device_uvector<i_t> input_vars(vars.size(), handle_ptr->get_stream());
   raft::copy(input_vars.data(), vars.data(), vars.size(), handle_ptr->get_stream());
-  cub::DeviceSegmentedSort::SortPairs(d_temp_storage.data(),
+  (void)hipcub::DeviceSegmentedSort::SortPairs(d_temp_storage.data(),
                                       temp_storage_bytes,
                                       input_random_vec.data(),
                                       random_vector.data(),
@@ -92,7 +93,7 @@ void sort_subsections(raft::device_span<i_t> vars,
   d_temp_storage.resize(temp_storage_bytes, handle_ptr->get_stream());
 
   // Run sorting operation
-  cub::DeviceSegmentedSort::SortPairs(d_temp_storage.data(),
+  (void)hipcub::DeviceSegmentedSort::SortPairs(d_temp_storage.data(),
                                       temp_storage_bytes,
                                       input_random_vec.data(),
                                       random_vector.data(),
@@ -674,11 +675,23 @@ constraint_prop_t<i_t, f_t>::generate_bulk_rounding_vector(
     f_t first_probe, second_probe;
     // if it is a bulk rounding do
     if (host_vars_to_set.size() > 1) {
+#ifdef __HIP_PLATFORM_AMD__
+      auto pair = generate_double_probing_pair(sol, orig_sol, unset_var_idx, probing_config, true);
+      first_probe = pair.first;
+      second_probe = pair.second;
+#else
       cuda::std::tie(first_probe, second_probe) =
         generate_double_probing_pair(sol, orig_sol, unset_var_idx, probing_config, true);
+#endif
     } else {
+#ifdef __HIP_PLATFORM_AMD__
+      auto pair = generate_double_probing_pair(sol, orig_sol, unset_var_idx, probing_config, false);
+      first_probe = pair.first;
+      second_probe = pair.second;
+#else
       cuda::std::tie(first_probe, second_probe) =
         generate_double_probing_pair(sol, orig_sol, unset_var_idx, probing_config, false);
+#endif
     }
     cuopt_assert(
       test_var_out_of_bounds(orig_sol, unset_var_idx, first_probe, int_tol, sol.handle_ptr),

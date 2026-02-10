@@ -9,6 +9,16 @@
 
 namespace cuopt::linear_programming::pdlp_hyper_params {
 
+// Device __constant__ definitions (declared extern in header)
+__constant__ double default_reduction_exponent;
+__constant__ double default_growth_exponent;
+__constant__ double default_primal_weight_update_smoothing;
+__constant__ double default_sufficient_reduction_for_restart;
+__constant__ double default_necessary_reduction_for_restart;
+__constant__ double primal_importance;
+__constant__ double primal_distance_smoothing;
+__constant__ double dual_distance_smoothing;
+
 // Scaling factor applied when computing the initial step size
 double initial_step_size_scaling = 1.0;
 // Number of Ruiz iterations applied during initial scaling

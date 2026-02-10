@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -55,16 +56,16 @@ pdlp_initial_scaling_strategy_t<i_t, f_t>::pdlp_initial_scaling_strategy_t(
 {
   raft::common::nvtx::range fun_scope("Initializing initial_scaling_strategy");
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "Initializing initial_scaling_strategy" << std::endl;
 #endif
 
   if (!running_mip_) cuopt_assert(pdhg_solver_ptr_ != nullptr, "PDHG solver pointer is null");
 
   // start with all one for scaling vectors
-  RAFT_CUDA_TRY(cudaMemsetAsync(
+  RAFT_CUDA_TRY(hipMemsetAsync(
     iteration_constraint_matrix_scaling_.data(), 0.0, sizeof(f_t) * dual_size_h_, stream_view_));
-  RAFT_CUDA_TRY(cudaMemsetAsync(
+  RAFT_CUDA_TRY(hipMemsetAsync(
     iteration_variable_scaling_.data(), 0.0, sizeof(f_t) * primal_size_h_, stream_view_));
   thrust::fill(handle_ptr_->get_thrust_policy(),
                cummulative_constraint_matrix_scaling_.begin(),
@@ -103,7 +104,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::bound_objective_rescaling()
     if (isfinite(upper)) sum += upper * upper;
     return sum;
   };
-  cub::DeviceReduce::TransformReduce(
+  hipcub::DeviceReduce::TransformReduce(
     nullptr,
     bytes,
     thrust::make_zip_iterator(op_problem_scaled_.constraint_lower_bounds.data(),
@@ -117,7 +118,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::bound_objective_rescaling()
 
   d_temp_storage.resize(bytes, stream_view_);
 
-  cub::DeviceReduce::TransformReduce(
+  hipcub::DeviceReduce::TransformReduce(
     d_temp_storage.data(),
     bytes,
     thrust::make_zip_iterator(op_problem_scaled_.constraint_lower_bounds.data(),
@@ -142,7 +143,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::bound_objective_rescaling()
   objective_rescaling_.set_value_async(h_objective_rescaling, stream_view_);
 
   // Sync since we are using local variable
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 }
 
 template <typename i_t, typename f_t>
@@ -179,7 +180,7 @@ template <typename i_t, typename f_t>
 void pdlp_initial_scaling_strategy_t<i_t, f_t>::ruiz_inf_scaling(i_t number_of_ruiz_iterations)
 {
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "Doing ruiz_inf_scaling" << std::endl;
 #endif
   for (int i = 0; i < number_of_ruiz_iterations; i++) {
@@ -190,7 +191,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::ruiz_inf_scaling(i_t number_of_r
     i_t number_of_threads = std::min(op_problem_scaled_.n_variables, (i_t)block_size);
     inf_norm_row_and_col_kernel<i_t, f_t><<<number_of_blocks, number_of_threads, 0, stream_view_>>>(
       op_problem_scaled_.view(), this->view());
-    RAFT_CUDA_TRY(cudaPeekAtLastError());
+    RAFT_CUDA_TRY(hipPeekAtLastError());
 
     if (running_mip_) { reset_integer_variables(); }
 
@@ -209,9 +210,9 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::ruiz_inf_scaling(i_t number_of_r
                            stream_view_);
 
     // Reset the iteration_scaling vectors to all 0
-    RAFT_CUDA_TRY(cudaMemsetAsync(
+    RAFT_CUDA_TRY(hipMemsetAsync(
       iteration_constraint_matrix_scaling_.data(), 0.0, sizeof(f_t) * dual_size_h_, stream_view_));
-    RAFT_CUDA_TRY(cudaMemsetAsync(
+    RAFT_CUDA_TRY(hipMemsetAsync(
       iteration_variable_scaling_.data(), 0.0, sizeof(f_t) * primal_size_h_, stream_view_));
   }
 }
@@ -309,9 +310,9 @@ template <typename i_t, typename f_t>
 void pdlp_initial_scaling_strategy_t<i_t, f_t>::pock_chambolle_scaling(f_t alpha)
 {
   // Reset the iteration_scaling vectors to all 0
-  RAFT_CUDA_TRY(cudaMemsetAsync(
+  RAFT_CUDA_TRY(hipMemsetAsync(
     iteration_constraint_matrix_scaling_.data(), 0.0, sizeof(f_t) * dual_size_h_, stream_view_));
-  RAFT_CUDA_TRY(cudaMemsetAsync(
+  RAFT_CUDA_TRY(hipMemsetAsync(
     iteration_variable_scaling_.data(), 0.0, sizeof(f_t) * primal_size_h_, stream_view_));
 
   EXE_CUOPT_EXPECTS(
@@ -329,7 +330,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::pock_chambolle_scaling(f_t alpha
   pock_chambolle_scaling_kernel_row<i_t, f_t, number_of_threads>
     <<<op_problem_scaled_.n_constraints, number_of_threads, 0, stream_view_>>>(
       op_problem_scaled_.view(), alpha, this->view());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   // Use transposed matrix instead to compute column-wise more easily
   pock_chambolle_scaling_kernel_col<i_t, f_t, number_of_threads>
@@ -340,7 +341,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::pock_chambolle_scaling(f_t alpha
       A_T_.data(),
       A_T_offsets_.data(),
       A_T_indices_.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   if (running_mip_) { reset_integer_variables(); }
 
@@ -409,7 +410,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::scale_problem()
   i_t number_of_threads = std::min(op_problem_scaled_.n_variables, block_size);
   scale_problem_kernel<i_t, f_t><<<number_of_blocks, number_of_threads, 0, stream_view_>>>(
     this->view(), op_problem_scaled_.view());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   // also scale A_T in cusparse view
   i_t number_of_blocks_transposed = op_problem_scaled_.n_variables / block_size;
@@ -419,7 +420,7 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::scale_problem()
   scale_transposed_problem_kernel<i_t, f_t>
     <<<number_of_blocks_transposed, number_of_threads_transposed, 0, stream_view_>>>(
       this->view(), A_T_.data(), A_T_offsets_.data(), A_T_indices_.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   // Scale c
   raft::linalg::eltwiseMultiply(
@@ -430,12 +431,13 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::scale_problem()
     stream_view_);
 
   using f_t2 = typename type_2<f_t>::type;
-  cub::DeviceTransform::Transform(cuda::std::make_tuple(op_problem_scaled_.variable_bounds.data(),
-                                                        cummulative_variable_scaling_.data()),
-                                  op_problem_scaled_.variable_bounds.data(),
-                                  primal_size_h_,
-                                  divide_check_zero<f_t, f_t2>(),
-                                  stream_view_.value());
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(op_problem_scaled_.variable_bounds.data(),
+                                                   cummulative_variable_scaling_.data())),
+    op_problem_scaled_.variable_bounds.data(),
+    primal_size_h_,
+    divide_check_zero<f_t, f_t2>(),
+    stream_view_.value()));
 
   raft::linalg::eltwiseMultiply(
     const_cast<rmm::device_uvector<f_t>&>(op_problem_scaled_.constraint_lower_bounds).data(),
@@ -460,25 +462,49 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::scale_problem()
            objective_rescaling_.value(stream_view_));
 #endif
 
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(op_problem_scaled_.constraint_lower_bounds.data(),
-                            op_problem_scaled_.constraint_upper_bounds.data()),
+    RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        op_problem_scaled_.constraint_lower_bounds.data(),
+        op_problem_scaled_.constraint_upper_bounds.data())),
       thrust::make_zip_iterator(op_problem_scaled_.constraint_lower_bounds.data(),
                                 op_problem_scaled_.constraint_upper_bounds.data()),
       op_problem_scaled_.constraint_upper_bounds.size(),
+#ifdef __HIP_PLATFORM_AMD__
+      // ROCm: Lambda accepts tuple
+      [bound_rescaling = bound_rescaling_.data()] __device__(
+        const thrust::tuple<f_t, f_t>& input) -> thrust::tuple<f_t, f_t> {
+        return {thrust::get<0>(input) * *bound_rescaling,
+                thrust::get<1>(input) * *bound_rescaling};
+      },
+#else
+      // CUDA: Lambda accepts separate args
       [bound_rescaling = bound_rescaling_.data()] __device__(
         f_t constraint_lower_bound, f_t constraint_upper_bound) -> thrust::tuple<f_t, f_t> {
         return {constraint_lower_bound * *bound_rescaling,
                 constraint_upper_bound * *bound_rescaling};
       },
-      stream_view_.value());
+#endif
+      stream_view_.value()));
 
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(op_problem_scaled_.variable_bounds.data(),
-                            op_problem_scaled_.objective_coefficients.data()),
+    RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        op_problem_scaled_.variable_bounds.data(),
+        op_problem_scaled_.objective_coefficients.data())),
       thrust::make_zip_iterator(op_problem_scaled_.variable_bounds.data(),
                                 op_problem_scaled_.objective_coefficients.data()),
       op_problem_scaled_.variable_bounds.size(),
+#ifdef __HIP_PLATFORM_AMD__
+      // ROCm: Lambda accepts tuple
+      [bound_rescaling     = bound_rescaling_.data(),
+       objective_rescaling = objective_rescaling_.data()] __device__(
+        const thrust::tuple<f_t2, f_t>& input) -> thrust::tuple<f_t2, f_t> {
+        auto variable_bounds = thrust::get<0>(input);
+        auto objective_coefficient = thrust::get<1>(input);
+        return {{variable_bounds.x * *bound_rescaling, variable_bounds.y * *bound_rescaling},
+                objective_coefficient * *objective_rescaling};
+      },
+#else
+      // CUDA: Lambda accepts separate args
       [bound_rescaling     = bound_rescaling_.data(),
        objective_rescaling = objective_rescaling_.data()] __device__(f_t2 variable_bounds,
                                                                      f_t objective_coefficient)
@@ -486,7 +512,8 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::scale_problem()
         return {{variable_bounds.x * *bound_rescaling, variable_bounds.y * *bound_rescaling},
                 objective_coefficient * *objective_rescaling};
       },
-      stream_view_.value());
+#endif
+      stream_view_.value()));
   }
 
 #ifdef CUPDLP_DEBUG_MODE

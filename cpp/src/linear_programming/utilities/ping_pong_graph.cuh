@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 
 namespace cuopt::linear_programming::detail {
 
@@ -26,8 +26,8 @@ class ping_pong_graph_t {
   ~ping_pong_graph_t()
   {
     if (!is_batch_mode_) {
-      if (even_initialized) { RAFT_CUDA_TRY_NO_THROW(cudaGraphExecDestroy(even_instance)); }
-      if (odd_initialized) { RAFT_CUDA_TRY_NO_THROW(cudaGraphExecDestroy(odd_instance)); }
+      if (even_initialized) { RAFT_CUDA_TRY_NO_THROW(hipGraphExecDestroy(even_instance)); }
+      if (odd_initialized) { RAFT_CUDA_TRY_NO_THROW(hipGraphExecDestroy(odd_instance)); }
     }
   }
 
@@ -36,10 +36,10 @@ class ping_pong_graph_t {
     if (!is_batch_mode_) {
       if (total_pdlp_iterations % 2 == 0 && !even_initialized) {
         RAFT_CUDA_TRY(
-          cudaStreamBeginCapture(stream_view_.value(), cudaStreamCaptureModeThreadLocal));
+          hipStreamBeginCapture(stream_view_.value(), hipStreamCaptureModeThreadLocal));
       } else if (total_pdlp_iterations % 2 == 1 && !odd_initialized) {
         RAFT_CUDA_TRY(
-          cudaStreamBeginCapture(stream_view_.value(), cudaStreamCaptureModeThreadLocal));
+          hipStreamBeginCapture(stream_view_.value(), hipStreamCaptureModeThreadLocal));
       }
     }
   }
@@ -48,15 +48,23 @@ class ping_pong_graph_t {
   {
     if (!is_batch_mode_) {
       if (total_pdlp_iterations % 2 == 0 && !even_initialized) {
-        RAFT_CUDA_TRY(cudaStreamEndCapture(stream_view_.value(), &even_graph));
-        RAFT_CUDA_TRY(cudaGraphInstantiate(&even_instance, even_graph));
+        RAFT_CUDA_TRY(hipStreamEndCapture(stream_view_.value(), &even_graph));
+#ifdef __HIP_PLATFORM_AMD__
+        RAFT_CUDA_TRY(hipGraphInstantiate(&even_instance, even_graph, nullptr, nullptr, 0));
+#else
+        RAFT_CUDA_TRY(hipGraphInstantiate(&even_instance, even_graph));
+#endif
         even_initialized = true;
-        RAFT_CUDA_TRY_NO_THROW(cudaGraphDestroy(even_graph));
+        RAFT_CUDA_TRY_NO_THROW(hipGraphDestroy(even_graph));
       } else if (total_pdlp_iterations % 2 == 1 && !odd_initialized) {
-        RAFT_CUDA_TRY(cudaStreamEndCapture(stream_view_.value(), &odd_graph));
-        RAFT_CUDA_TRY(cudaGraphInstantiate(&odd_instance, odd_graph));
+        RAFT_CUDA_TRY(hipStreamEndCapture(stream_view_.value(), &odd_graph));
+#ifdef __HIP_PLATFORM_AMD__
+        RAFT_CUDA_TRY(hipGraphInstantiate(&odd_instance, odd_graph, nullptr, nullptr, 0));
+#else
+        RAFT_CUDA_TRY(hipGraphInstantiate(&odd_instance, odd_graph));
+#endif
         odd_initialized = true;
-        RAFT_CUDA_TRY_NO_THROW(cudaGraphDestroy(odd_graph));
+        RAFT_CUDA_TRY_NO_THROW(hipGraphDestroy(odd_graph));
       }
     }
   }
@@ -65,9 +73,9 @@ class ping_pong_graph_t {
   {
     if (!is_batch_mode_) {
       if (total_pdlp_iterations % 2 == 0 && even_initialized) {
-        RAFT_CUDA_TRY(cudaGraphLaunch(even_instance, stream_view_.value()));
+        RAFT_CUDA_TRY(hipGraphLaunch(even_instance, stream_view_.value()));
       } else if (total_pdlp_iterations % 2 == 1 && odd_initialized) {
-        RAFT_CUDA_TRY(cudaGraphLaunch(odd_instance, stream_view_.value()));
+        RAFT_CUDA_TRY(hipGraphLaunch(odd_instance, stream_view_.value()));
       }
     }
   }
@@ -82,10 +90,10 @@ class ping_pong_graph_t {
   }
 
  private:
-  cudaGraph_t even_graph;
-  cudaGraph_t odd_graph;
-  cudaGraphExec_t even_instance;
-  cudaGraphExec_t odd_instance;
+  hipGraph_t even_graph;
+  hipGraph_t odd_graph;
+  hipGraphExec_t even_instance;
+  hipGraphExec_t odd_instance;
   rmm::cuda_stream_view stream_view_;
   bool even_initialized{false};
   bool odd_initialized{false};

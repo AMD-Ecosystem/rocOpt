@@ -33,7 +33,7 @@ class solution_handle_t {
   solution_handle_t(rmm::cuda_stream_view stream)
     : dev_id_([]() -> i_t {
         i_t cur_dev = -1;
-        RAFT_CUDA_TRY(cudaGetDevice(&cur_dev));
+        RAFT_CUDA_TRY(hipGetDevice(&cur_dev));
         return cur_dev;
       }()),
       stream_view_(stream)
@@ -46,11 +46,11 @@ class solution_handle_t {
   i_t get_device() const { return dev_id_; }
   void sync_stream() const { stream_view_.synchronize(); };
 
-  const cudaDeviceProp& get_device_properties() const
+  const hipDeviceProp_t& get_device_properties() const
   {
     std::lock_guard<std::mutex> _(mutex_);
     if (!device_prop_initialized_) {
-      RAFT_CUDA_TRY_NO_THROW(cudaGetDeviceProperties(&prop_, dev_id_));
+      RAFT_CUDA_TRY_NO_THROW(hipGetDeviceProperties(&prop_, dev_id_));
       device_prop_initialized_ = true;
     }
     return prop_;
@@ -59,7 +59,7 @@ class solution_handle_t {
   int get_num_sms() const
   {
     int sm_count;
-    cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev_id_);
+    hipDeviceGetAttribute(&sm_count, hipDeviceAttributeMultiprocessorCount, dev_id_);
     return sm_count;
   }
 
@@ -67,7 +67,7 @@ class solution_handle_t {
   void create_resources() { thrust_policy_ = std::make_shared<rmm::exec_policy>(stream_view_); }
 
   const i_t dev_id_{0};
-  mutable cudaDeviceProp prop_;
+  mutable hipDeviceProp_t prop_;
   mutable std::mutex mutex_;
   mutable bool device_prop_initialized_{false};
 

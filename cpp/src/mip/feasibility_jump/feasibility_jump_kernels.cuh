@@ -1,9 +1,16 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
+
+// HIP compatibility: __grid_constant__ is a CUDA 12+ feature not available in HIP
+// It's a hint for the compiler that the parameter is read-only and constant across the grid
+#ifdef __HIP_PLATFORM_AMD__
+#define __grid_constant__
+#endif
 
 #include "feasibility_jump.cuh"
 
@@ -12,7 +19,7 @@
 
 #include <raft/random/rng.cuh>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 namespace cuopt::linear_programming::detail {
 

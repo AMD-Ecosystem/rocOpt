@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -26,7 +27,7 @@
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 #include <thrust/count.h>
 #include <thrust/extrema.h>
@@ -35,13 +36,29 @@
 
 namespace cuopt::linear_programming::detail {
 
+#ifdef __HIP_PLATFORM_AMD__
+// ROCm: Simple subtraction functor for zip iterators
+template <typename T>
+struct subtract_tuple {
+  template <typename T1, typename T2>
+  __device__ __forceinline__ T operator()(const thrust::tuple<T1, T2>& input) const {
+    return thrust::get<0>(input) - thrust::get<1>(input);
+  }
+  // Overload for index parameter
+  template <typename T1, typename T2, typename IndexType>
+  __device__ __forceinline__ T operator()(const thrust::tuple<T1, T2>& input, IndexType idx) const {
+    return thrust::get<0>(input) - thrust::get<1>(input);
+  }
+};
+#endif
+
 void set_pdlp_hyper_parameters(rmm::cuda_stream_view stream_view)
 {
-  RAFT_CUDA_TRY(cudaMemcpyToSymbolAsync(pdlp_hyper_params::primal_importance,
+  RAFT_CUDA_TRY(hipMemcpyToSymbolAsync(HIP_SYMBOL(pdlp_hyper_params::primal_importance),
                                         &pdlp_hyper_params::host_primal_importance,
                                         sizeof(double),
                                         0,
-                                        cudaMemcpyHostToDevice,
+                                        hipMemcpyHostToDevice,
                                         stream_view));
 }
 
@@ -262,13 +279,13 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   if (time_limit_reached(timer)) {
     if (settings_.save_best_primal_so_far) {
 #ifdef PDLP_VERBOSE_MODE
-      RAFT_CUDA_TRY(cudaDeviceSynchronize());
+      RAFT_CUDA_TRY(hipDeviceSynchronize());
       std::cout << "Time Limit reached, returning best primal so far" << std::endl;
 #endif
       return std::move(best_primal_solution_so_far);
     }
 #ifdef PDLP_VERBOSE_MODE
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     std::cout << "Time Limit reached, returning current solution" << std::endl;
 #endif
     return current_termination_strategy_.fill_return_problem_solution(
@@ -288,14 +305,14 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   if (internal_solver_iterations_ >= settings_.iteration_limit) {
     if (settings_.save_best_primal_so_far) {
 #ifdef PDLP_VERBOSE_MODE
-      RAFT_CUDA_TRY(cudaDeviceSynchronize());
+      RAFT_CUDA_TRY(hipDeviceSynchronize());
       std::cout << "Iteration Limit reached, returning best primal so far" << std::endl;
 #endif
       best_primal_solution_so_far.set_termination_status(pdlp_termination_status_t::IterationLimit);
       return std::move(best_primal_solution_so_far);
     }
 #ifdef PDLP_VERBOSE_MODE
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     std::cout << "Iteration Limit reached, returning current solution" << std::endl;
 #endif
 
@@ -316,7 +333,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   if (settings_.method == method_t::Concurrent && settings_.concurrent_halt != nullptr &&
       *settings_.concurrent_halt == 1) {
 #ifdef PDLP_VERBOSE_MODE
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     std::cout << "Concurrent Limit reached, returning current solution" << std::endl;
 #endif
     return current_termination_strategy_.fill_return_problem_solution(
@@ -352,7 +369,7 @@ const pdlp_solver_t<i_t, f_t>::primal_quality_adapter_t& pdlp_solver_t<i_t, f_t>
   const pdlp_solver_t<i_t, f_t>::primal_quality_adapter_t& other)
 {
 #ifdef PDLP_DEBUG_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "  current.is_primal_feasible = " << current.is_primal_feasible << std::endl;
   std::cout << "  current.nb_violated_constraints = " << current.nb_violated_constraints
             << std::endl;
@@ -400,7 +417,7 @@ void pdlp_solver_t<i_t, f_t>::record_best_primal_so_far(
   const pdlp_termination_status_t& termination_average)
 {
 #ifdef PDLP_VERBOSE_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "Recording best primal so far" << std::endl;
 #endif
 
@@ -426,7 +443,7 @@ void pdlp_solver_t<i_t, f_t>::record_best_primal_so_far(
   // Best overall is different (better) than last found
   if (best_overall != best_primal_quality_so_far_) {
 #ifdef PDLP_DEBUG_MODE
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     std::cout << "New best primal found" << std::endl;
 #endif
     best_primal_quality_so_far_ = best_overall;
@@ -451,7 +468,7 @@ void pdlp_solver_t<i_t, f_t>::record_best_primal_so_far(
     }
 
 #ifdef PDLP_DEBUG_MODE
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     std::cout << debug_string << std::endl;
 #endif
 
@@ -464,7 +481,7 @@ void pdlp_solver_t<i_t, f_t>::record_best_primal_so_far(
       true);
   } else {
 #ifdef PDLP_DEBUG_MODE
-    RAFT_CUDA_TRY(cudaDeviceSynchronize());
+    RAFT_CUDA_TRY(hipDeviceSynchronize());
     std::cout << "Last best primal is still best" << std::endl;
 #endif
   }
@@ -544,10 +561,10 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
   // Still need to always compute the termination condition for current even if we don't check them
   // after for kkt restart
 #ifdef PDLP_VERBOSE_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   printf("Termination criteria current\n");
   print_termination_criteria(timer, false);
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
 #endif
   pdlp_termination_status_t termination_current =
     current_termination_strategy_.evaluate_termination_criteria(
@@ -563,10 +580,10 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       problem_ptr->objective_coefficients);
 
 #ifdef PDLP_VERBOSE_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   std::cout << "Termination criteria average:" << std::endl;
   print_termination_criteria(timer, true);
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
 #endif
   // Check both average and current solution
   pdlp_termination_status_t termination_average =
@@ -862,7 +879,7 @@ static void print_problem_info(const rmm::device_uvector<f_t>& nonzero_coeffs,
                                const rmm::device_uvector<f_t>& objective_coeffs,
                                const rmm::device_uvector<f_t>& combined_bounds)
 {
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
 
   // Get stats for constraint matrix coefficients
   f_t smallest, largest, avg;
@@ -880,7 +897,7 @@ static void print_problem_info(const rmm::device_uvector<f_t>& nonzero_coeffs,
   std::cout << "Absolute value of rhs vector elements: largest=" << largest
             << ", smallest=" << smallest << ", avg=" << avg << std::endl;
 
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
 }
 
 template <typename i_t, typename f_t>
@@ -945,7 +962,7 @@ void pdlp_solver_t<i_t, f_t>::update_primal_dual_solutions(
                  dual.value()->data(),
                  pdhg_solver_.get_potential_next_dual_solution().size(),
                  stream_view_);
-      RAFT_CUDA_TRY(cudaMemsetAsync(saddle.get_current_AtY().data(),
+      RAFT_CUDA_TRY(hipMemsetAsync(saddle.get_current_AtY().data(),
                                     f_t(0.0),
                                     sizeof(f_t) * saddle.get_current_AtY().size(),
                                     stream_view_));
@@ -1029,22 +1046,34 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(bool& has_restarted)
                "delta_dual_ size mismatch");
 
   // Computing the deltas
-  cub::DeviceTransform::Transform(cuda::std::make_tuple(pdhg_solver_.get_reflected_primal().data(),
-                                                        pdhg_solver_.get_primal_solution().data()),
-                                  pdhg_solver_.get_saddle_point_state().get_delta_primal().data(),
-                                  primal_size_h_,
-                                  cuda::std::minus<f_t>{},
-                                  stream_view_.value());
-  cub::DeviceTransform::Transform(cuda::std::make_tuple(pdhg_solver_.get_reflected_dual().data(),
-                                                        pdhg_solver_.get_dual_solution().data()),
-                                  pdhg_solver_.get_saddle_point_state().get_delta_dual().data(),
-                                  dual_size_h_,
-                                  cuda::std::minus<f_t>{},
-                                  stream_view_.value());
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(
+      pdhg_solver_.get_reflected_primal().data(),
+      pdhg_solver_.get_primal_solution().data())),
+    pdhg_solver_.get_saddle_point_state().get_delta_primal().data(),
+    primal_size_h_,
+#ifdef __HIP_PLATFORM_AMD__
+    subtract_tuple<f_t>{},
+#else
+    cuda::std::minus<f_t>{},
+#endif
+    stream_view_.value()));
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(
+      pdhg_solver_.get_reflected_dual().data(),
+      pdhg_solver_.get_dual_solution().data())),
+    pdhg_solver_.get_saddle_point_state().get_delta_dual().data(),
+    dual_size_h_,
+#ifdef __HIP_PLATFORM_AMD__
+    subtract_tuple<f_t>{},
+#else
+    cuda::std::minus<f_t>{},
+#endif
+    stream_view_.value()));
 
   auto& cusparse_view = pdhg_solver_.get_cusparse_view();
   // Make potential_next_dual_solution point towards reflected dual solution to reuse the code
-  RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution,
+  RAFT_CUSPARSE_TRY(hipsparseDnVecSetValues(cusparse_view.potential_next_dual_solution,
                                            (void*)pdhg_solver_.get_reflected_dual().data()));
 
   step_size_strategy_.compute_interaction_and_movement(
@@ -1066,7 +1095,7 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(bool& has_restarted)
 
   // Put back
   RAFT_CUSPARSE_TRY(
-    cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution,
+    hipsparseDnVecSetValues(cusparse_view.potential_next_dual_solution,
                            (void*)pdhg_solver_.get_potential_next_dual_solution().data()));
 
   if (has_restarted) {
@@ -1134,20 +1163,20 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
   // Project initial primal solution
   if (pdlp_hyper_params::project_initial_primal) {
     using f_t2 = typename type_2<f_t>::type;
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(pdhg_solver_.get_primal_solution().data(),
-                            op_problem_scaled_.variable_bounds.data()),
+    RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(pdhg_solver_.get_primal_solution().data(),
+                                                     op_problem_scaled_.variable_bounds.data())),
       pdhg_solver_.get_primal_solution().data(),
       primal_size_h_,
       clamp<f_t, f_t2>(),
-      stream_view_.value());
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(unscaled_primal_avg_solution_.data(),
-                            op_problem_scaled_.variable_bounds.data()),
+      stream_view_.value()));
+    RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(unscaled_primal_avg_solution_.data(),
+                                                     op_problem_scaled_.variable_bounds.data())),
       unscaled_primal_avg_solution_.data(),
       primal_size_h_,
       clamp<f_t, f_t2>(),
-      stream_view_.value());
+      stream_view_.value()));
   }
 
   if (verbose) {
@@ -1390,34 +1419,64 @@ void pdlp_solver_t<i_t, f_t>::halpern_update()
 #endif
 
   // Update primal
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(pdhg_solver_.get_reflected_primal().data(),
-                          pdhg_solver_.get_saddle_point_state().get_primal_solution().data(),
-                          restart_strategy_.last_restart_duality_gap_.primal_solution_.data()),
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(
+      pdhg_solver_.get_reflected_primal().data(),
+      pdhg_solver_.get_saddle_point_state().get_primal_solution().data(),
+      restart_strategy_.last_restart_duality_gap_.primal_solution_.data())),
     pdhg_solver_.get_saddle_point_state().get_primal_solution().data(),
     primal_size_h_,
+#ifdef __HIP_PLATFORM_AMD__
+    // ROCm: Lambda accepts tuple
+    [weight, reflection_coefficient = pdlp_hyper_params::reflection_coefficient] __device__(
+      const thrust::tuple<f_t, f_t, f_t>& input) {
+      f_t reflected_primal = thrust::get<0>(input);
+      f_t current_primal = thrust::get<1>(input);
+      f_t initial_primal = thrust::get<2>(input);
+      const f_t reflected = reflection_coefficient * reflected_primal +
+                            (f_t(1.0) - reflection_coefficient) * current_primal;
+      return weight * reflected + (f_t(1.0) - weight) * initial_primal;
+    },
+#else
+    // CUDA: Lambda accepts separate args
     [weight, reflection_coefficient = pdlp_hyper_params::reflection_coefficient] __device__(
       f_t reflected_primal, f_t current_primal, f_t initial_primal) {
       const f_t reflected = reflection_coefficient * reflected_primal +
                             (f_t(1.0) - reflection_coefficient) * current_primal;
       return weight * reflected + (f_t(1.0) - weight) * initial_primal;
     },
-    stream_view_.value());
+#endif
+    stream_view_.value()));
 
   // Update dual
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(pdhg_solver_.get_reflected_dual().data(),
-                          pdhg_solver_.get_saddle_point_state().get_dual_solution().data(),
-                          restart_strategy_.last_restart_duality_gap_.dual_solution_.data()),
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(
+      pdhg_solver_.get_reflected_dual().data(),
+      pdhg_solver_.get_saddle_point_state().get_dual_solution().data(),
+      restart_strategy_.last_restart_duality_gap_.dual_solution_.data())),
     pdhg_solver_.get_saddle_point_state().get_dual_solution().data(),
     dual_size_h_,
+#ifdef __HIP_PLATFORM_AMD__
+    // ROCm: Lambda accepts tuple
+    [weight, reflection_coefficient = pdlp_hyper_params::reflection_coefficient] __device__(
+      const thrust::tuple<f_t, f_t, f_t>& input) {
+      f_t reflected_dual = thrust::get<0>(input);
+      f_t current_dual = thrust::get<1>(input);
+      f_t initial_dual = thrust::get<2>(input);
+      const f_t reflected = reflection_coefficient * reflected_dual +
+                            (f_t(1.0) - reflection_coefficient) * current_dual;
+      return weight * reflected + (f_t(1.0) - weight) * initial_dual;
+    },
+#else
+    // CUDA: Lambda accepts separate args
     [weight, reflection_coefficient = pdlp_hyper_params::reflection_coefficient] __device__(
       f_t reflected_dual, f_t current_dual, f_t initial_dual) {
       const f_t reflected = reflection_coefficient * reflected_dual +
                             (f_t(1.0) - reflection_coefficient) * current_dual;
       return weight * reflected + (f_t(1.0) - weight) * initial_dual;
     },
-    stream_view_.value());
+#endif
+    stream_view_.value()));
 
 #ifdef CUPDLP_DEBUG_MODE
   print("halpen_update current primal",
@@ -1451,30 +1510,30 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_step_size()
     size_t temp_storage_bytes = 0;
 
     detail::max_abs_value<f_t> red_op;
-    cub::DeviceReduce::Reduce(d_temp_storage,
+    RAFT_CUDA_TRY(hipcub::DeviceReduce::Reduce(d_temp_storage,
                               temp_storage_bytes,
                               op_problem_scaled_.coefficients.data(),
                               abs_max_element.data(),
                               op_problem_scaled_.nnz,
                               red_op,
                               0.0,
-                              stream_view_);
+                              stream_view_));
     // Allocate temporary storage
     rmm::device_buffer cub_tmp{temp_storage_bytes, stream_view_};
     // Run max-reduction
-    cub::DeviceReduce::Reduce(cub_tmp.data(),
+    RAFT_CUDA_TRY(hipcub::DeviceReduce::Reduce(cub_tmp.data(),
                               temp_storage_bytes,
                               op_problem_scaled_.coefficients.data(),
                               abs_max_element.data(),
                               op_problem_scaled_.nnz,
                               red_op,
                               0.0,
-                              stream_view_);
+                              stream_view_));
     raft::linalg::eltwiseDivideCheckZero(
       step_size_.data(), step_size_.data(), abs_max_element.data(), 1, stream_view_);
 
     // Sync since we are using local variable
-    RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+    RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
   } else {
     constexpr i_t max_iterations = 5000;
     constexpr f_t tolerance      = 1e-4;
@@ -1501,7 +1560,7 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_step_size()
     rmm::device_scalar<f_t> reusable_device_scalar_value_1_(1, stream_view_);
     rmm::device_scalar<f_t> reusable_device_scalar_value_0_(0, stream_view_);
 
-    cusparseDnVecDescr_t vecZ, vecQ, vecATQ;
+    hipsparseDnVecDescr_t vecZ, vecQ, vecATQ;
     RAFT_CUSPARSE_TRY(
       raft::sparse::detail::cusparsecreatednvec(&vecZ, m, const_cast<f_t*>(d_z.data())));
     RAFT_CUSPARSE_TRY(
@@ -1522,36 +1581,36 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_step_size()
       cuopt_assert(norm_q.value(stream_view_) != f_t(0), "norm q can't be 0");
 
       // d_q *= 1 / norm_q
-      cub::DeviceTransform::Transform(
+      RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
         d_q.data(),
         d_q.data(),
         d_q.size(),
         [norm_q = norm_q.data()] __device__(f_t d_q) { return d_q / *norm_q; },
-        stream_view_.value());
+        stream_view_.value()));
 
       // A_t_q = A_t @ d_q
       RAFT_CUSPARSE_TRY(
         raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                           CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                           HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                            reusable_device_scalar_value_1_.data(),
                                            cusparse_view_.A_T,
                                            vecQ,
                                            reusable_device_scalar_value_0_.data(),
                                            vecATQ,
-                                           CUSPARSE_SPMV_CSR_ALG2,
+                                           HIPSPARSE_SPMV_CSR_ALG2,
                                            (f_t*)cusparse_view_.buffer_transpose.data(),
                                            stream_view_));
 
       // z = A @ A_t_q
       RAFT_CUSPARSE_TRY(
         raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                           CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                           HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                            reusable_device_scalar_value_1_.data(),  // 1
                                            cusparse_view_.A,
                                            vecATQ,
                                            reusable_device_scalar_value_0_.data(),  // 1
                                            vecZ,
-                                           CUSPARSE_SPMV_CSR_ALG2,
+                                           HIPSPARSE_SPMV_CSR_ALG2,
                                            (f_t*)cusparse_view_.buffer_non_transpose.data(),
                                            stream_view_));
       // sigma_max_sq = dot(q, z)
@@ -1564,14 +1623,22 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_step_size()
                                                       sigma_max_sq.data(),
                                                       stream_view_));
 
-      cub::DeviceTransform::Transform(
-        cuda::std::make_tuple(d_q.data(), d_z.data()),
+      RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+        thrust::make_zip_iterator(thrust::make_tuple(d_q.data(), d_z.data())),
         d_q.data(),
         d_q.size(),
+#ifdef __HIP_PLATFORM_AMD__
+        // ROCm: Lambda accepts tuple
+        [sigma_max_sq = sigma_max_sq.data()] __device__(const thrust::tuple<f_t, f_t>& input) {
+          return thrust::get<0>(input) * -(*sigma_max_sq) + thrust::get<1>(input);
+        },
+#else
+        // CUDA: Lambda accepts separate args
         [sigma_max_sq = sigma_max_sq.data()] __device__(f_t d_q, f_t d_z) {
           return d_q * -(*sigma_max_sq) + d_z;
         },
-        stream_view_.value());
+#endif
+        stream_view_.value()));
 
       my_l2_norm<i_t, f_t>(d_q, residual_norm, handle_ptr_);
 
@@ -1586,10 +1653,10 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_step_size()
     step_size_.set_value_async(step_size, stream_view_);
 
     // Sync since we are using local variable
-    RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
-    RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(vecZ));
-    RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(vecQ));
-    RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(vecATQ));
+    RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
+    RAFT_CUSPARSE_TRY(hipsparseDestroyDnVec(vecZ));
+    RAFT_CUSPARSE_TRY(hipsparseDestroyDnVec(vecQ));
+    RAFT_CUSPARSE_TRY(hipsparseDestroyDnVec(vecATQ));
   }
 }
 
@@ -1661,10 +1728,10 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
 
   compute_weights_initial_primal_weight_from_squared_norms<<<1, 1, 0, stream_view_>>>(
     b_vec_norm.data(), c_vec_norm.data(), primal_weight_.data(), best_primal_weight_.data());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   // Sync since we are using local variable
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 }
 
 template <typename i_t, typename f_t>

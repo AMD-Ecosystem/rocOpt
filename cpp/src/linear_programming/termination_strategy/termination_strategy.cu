@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -93,7 +94,7 @@ pdlp_termination_status_t pdlp_termination_strategy_t<i_t, f_t>::evaluate_termin
 
   i_t tmp;
   raft::copy(&tmp, termination_status_.data(), 1, stream_view_);
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 
   return static_cast<pdlp_termination_status_t>(tmp);
 }
@@ -245,7 +246,7 @@ template <typename i_t, typename f_t>
 void pdlp_termination_strategy_t<i_t, f_t>::check_termination_criteria()
 {
 #ifdef PDLP_VERBOSE_MODE
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
 #endif
   check_termination_criteria_kernel<i_t, f_t>
     <<<1, 1, 0, stream_view_>>>(convergence_information_.view(),
@@ -254,7 +255,7 @@ void pdlp_termination_strategy_t<i_t, f_t>::check_termination_criteria()
                                 settings_.tolerances,
                                 settings_.detect_infeasibility,
                                 settings_.per_constraint_residual);
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 }
 
 template <typename i_t, typename f_t>
@@ -318,7 +319,7 @@ pdlp_termination_strategy_t<i_t, f_t>::fill_return_problem_solution(
              stream_view_);
   term_stats.solved_by_pdlp = (termination_status != pdlp_termination_status_t::ConcurrentLimit);
 
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+  RAFT_CUDA_TRY(hipStreamSynchronize(stream_view_));
 
   if (deep_copy) {
     optimization_problem_solution_t<i_t, f_t> op_solution{

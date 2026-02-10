@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -24,9 +25,26 @@
 #include <thrust/device_ptr.h>
 #include <thrust/iterator/zip_iterator.h>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 namespace cuopt::linear_programming::detail {
+
+#ifdef __HIP_PLATFORM_AMD__
+// ROCm-specific functor for tuple subtraction with DeviceTransform
+template <typename T>
+struct subtract_tuple {
+  template <typename T1, typename T2>
+  __device__ __forceinline__ T operator()(const thrust::tuple<T1, T2>& input) const {
+    return thrust::get<0>(input) - thrust::get<1>(input);
+  }
+  // Overload for index parameter
+  template <typename T1, typename T2, typename IndexType>
+  __device__ __forceinline__ T operator()(const thrust::tuple<T1, T2>& input, IndexType idx) const {
+    return thrust::get<0>(input) - thrust::get<1>(input);
+  }
+};
+#endif
+
 template <typename i_t, typename f_t>
 convergence_information_t<i_t, f_t>::convergence_information_t(
   raft::handle_t const* handle_ptr,
@@ -85,28 +103,28 @@ convergence_information_t<i_t, f_t>::convergence_information_t(
 
   void* d_temp_storage        = NULL;
   size_t temp_storage_bytes_1 = 0;
-  cub::DeviceReduce::Sum(d_temp_storage,
+  RAFT_CUDA_TRY(hipcub::DeviceReduce::Sum(d_temp_storage,
                          temp_storage_bytes_1,
                          bound_value_.begin(),
                          dual_objective_.data(),
                          dual_size_h_,
-                         stream_view_);
+                         stream_view_));
 
   size_t temp_storage_bytes_2 = 0;
-  cub::DeviceReduce::Sum(d_temp_storage,
+  RAFT_CUDA_TRY(hipcub::DeviceReduce::Sum(d_temp_storage,
                          temp_storage_bytes_2,
                          bound_value_.begin(),
                          reduced_cost_dual_objective_.data(),
                          primal_size_h_,
-                         stream_view_);
+                         stream_view_));
 
   size_of_buffer_       = std::max({temp_storage_bytes_1, temp_storage_bytes_2});
   this->rmm_tmp_buffer_ = rmm::device_buffer{size_of_buffer_, stream_view_};
 
-  RAFT_CUDA_TRY(cudaMemsetAsync(
+  RAFT_CUDA_TRY(hipMemsetAsync(
     primal_residual_.data(), 0.0, sizeof(f_t) * primal_residual_.size(), stream_view_));
   RAFT_CUDA_TRY(
-    cudaMemsetAsync(dual_residual_.data(), 0.0, sizeof(f_t) * dual_residual_.size(), stream_view_));
+    hipMemsetAsync(dual_residual_.data(), 0.0, sizeof(f_t) * dual_residual_.size(), stream_view_));
 }
 
 template <typename i_t, typename f_t>
@@ -219,13 +237,13 @@ void convergence_information_t<i_t, f_t>::compute_convergence_information(
   }
 
   compute_remaining_stats_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(this->view());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+  RAFT_CUDA_TRY(hipPeekAtLastError());
 
   //  cleanup for next termination evaluation
-  RAFT_CUDA_TRY(cudaMemsetAsync(
+  RAFT_CUDA_TRY(hipMemsetAsync(
     primal_residual_.data(), 0.0, sizeof(f_t) * primal_residual_.size(), stream_view_));
   RAFT_CUDA_TRY(
-    cudaMemsetAsync(dual_residual_.data(), 0.0, sizeof(f_t) * dual_residual_.size(), stream_view_));
+    hipMemsetAsync(dual_residual_.data(), 0.0, sizeof(f_t) * dual_residual_.size(), stream_view_));
 }
 
 template <typename f_t>
@@ -245,13 +263,13 @@ void convergence_information_t<i_t, f_t>::compute_primal_residual(
   // primal_product
   RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                        reusable_device_scalar_value_1_.data(),
                                        cusparse_view.A,
                                        cusparse_view.primal_solution,
                                        reusable_device_scalar_value_0_.data(),
                                        cusparse_view.tmp_dual,
-                                       CUSPARSE_SPMV_CSR_ALG2,
+                                       HIPSPARSE_SPMV_CSR_ALG2,
                                        (f_t*)cusparse_view.buffer_non_transpose.data(),
                                        stream_view_));
 
@@ -265,20 +283,36 @@ void convergence_information_t<i_t, f_t>::compute_primal_residual(
                                                  violation<f_t>(),
                                                  stream_view_);
   } else {
-    cub::DeviceTransform::Transform(
-      cuda::std::make_tuple(tmp_dual.data(),
-                            problem_ptr->constraint_lower_bounds.data(),
-                            problem_ptr->constraint_upper_bounds.data(),
-                            dual_iterate.data()),
-      thrust::make_zip_iterator(primal_residual_.data(), primal_slack_.data()),
+    RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(
+        tmp_dual.data(),
+        problem_ptr->constraint_lower_bounds.data(),
+        problem_ptr->constraint_upper_bounds.data(),
+        dual_iterate.data())),
+      thrust::make_zip_iterator(thrust::make_tuple(primal_residual_.data(), primal_slack_.data())),
       primal_residual_.size(),
+#ifdef __HIP_PLATFORM_AMD__
+      // ROCm: Lambda accepts tuple
+      [] __device__(const thrust::tuple<f_t, f_t, f_t, f_t>& input) -> thrust::tuple<f_t, f_t> {
+        f_t Ax = thrust::get<0>(input);
+        f_t lower = thrust::get<1>(input);
+        f_t upper = thrust::get<2>(input);
+        f_t dual = thrust::get<3>(input);
+        const f_t clamped_Ax = raft::max(lower, raft::min(Ax, upper));
+        return {Ax - clamped_Ax,
+                raft::max(dual, f_t(0.0)) * finite_or_zero(lower) +
+                  raft::min(dual, f_t(0.0)) * finite_or_zero(upper)};
+      },
+#else
+      // CUDA: Lambda accepts separate args
       [] __device__(f_t Ax, f_t lower, f_t upper, f_t dual) -> thrust::tuple<f_t, f_t> {
         const f_t clamped_Ax = raft::max(lower, raft::min(Ax, upper));
         return {Ax - clamped_Ax,
                 raft::max(dual, f_t(0.0)) * finite_or_zero(lower) +
                   raft::min(dual, f_t(0.0)) * finite_or_zero(upper)};
       },
-      stream_view_.value());
+#endif
+      stream_view_.value()));
   }
 }
 
@@ -314,7 +348,7 @@ void convergence_information_t<i_t, f_t>::compute_primal_objective(
       <<<1, 1, 0, stream_view_>>>(primal_objective_.data(),
                                   problem_ptr->presolve_data.objective_scaling_factor,
                                   problem_ptr->presolve_data.objective_offset);
-    RAFT_CUDA_TRY(cudaPeekAtLastError());
+    RAFT_CUDA_TRY(hipPeekAtLastError());
   }
 
 #ifdef CUPDLP_DEBUG_MODE
@@ -338,13 +372,13 @@ void convergence_information_t<i_t, f_t>::compute_dual_residual(
   thrust::fill(handle_ptr_->get_thrust_policy(), tmp_primal.begin(), tmp_primal.end(), f_t(0));
 
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                       HIPSPARSE_OPERATION_NON_TRANSPOSE,
                                                        reusable_device_scalar_value_1_.data(),
                                                        cusparse_view.A_T,
                                                        cusparse_view.dual_solution,
                                                        reusable_device_scalar_value_0_.data(),
                                                        cusparse_view.tmp_primal,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
+                                                       HIPSPARSE_SPMV_CSR_ALG2,
                                                        (f_t*)cusparse_view.buffer_transpose.data(),
                                                        stream_view_));
 
@@ -357,11 +391,22 @@ void convergence_information_t<i_t, f_t>::compute_dual_residual(
                            stream_view_);
 
   if (pdlp_hyper_params::use_reflected_primal_dual) {
-    cub::DeviceTransform::Transform(cuda::std::make_tuple(tmp_primal.data(), dual_slack.data()),
-                                    dual_residual_.data(),
-                                    dual_residual_.size(),
-                                    cuda::std::minus<>{},
-                                    stream_view_.value());
+#ifdef __HIP_PLATFORM_AMD__
+    // ROCm: Use namespace-scope subtract_tuple functor
+    RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(tmp_primal.data(), dual_slack.data())),
+      dual_residual_.data(),
+      dual_residual_.size(),
+      subtract_tuple<f_t>{},
+      stream_view_.value()));
+#else
+    RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+      thrust::make_zip_iterator(thrust::make_tuple(tmp_primal.data(), dual_slack.data())),
+      dual_residual_.data(),
+      dual_residual_.size(),
+      cuda::std::minus<>{},
+      stream_view_.value()));
+#endif
   } else {
     compute_reduced_cost_from_primal_gradient(tmp_primal, primal_solution);
 
@@ -397,12 +442,12 @@ void convergence_information_t<i_t, f_t>::compute_dual_objective(
                             constraint_bound_value_reduced_cost_product<f_t>(),
                             stream_view_);
 
-    cub::DeviceReduce::Sum(rmm_tmp_buffer_.data(),
+    RAFT_CUDA_TRY(hipcub::DeviceReduce::Sum(rmm_tmp_buffer_.data(),
                            size_of_buffer_,
                            bound_value_.begin(),
                            dual_objective_.data(),
                            dual_size_h_,
-                           stream_view_);
+                           stream_view_));
 
     compute_reduced_costs_dual_objective_contribution();
 
@@ -421,12 +466,12 @@ void convergence_information_t<i_t, f_t>::compute_dual_objective(
                                                     dual_dot_.data(),
                                                     stream_view_));
 
-    cub::DeviceReduce::Sum(rmm_tmp_buffer_.data(),
+    RAFT_CUDA_TRY(hipcub::DeviceReduce::Sum(rmm_tmp_buffer_.data(),
                            size_of_buffer_,
                            primal_slack_.begin(),
                            sum_primal_slack_.data(),
                            dual_size_h_,
-                           stream_view_);
+                           stream_view_));
 
     const f_t sum = dual_dot_.value(stream_view_) + sum_primal_slack_.value(stream_view_);
     dual_objective_.set_value_async(sum, stream_view_);
@@ -439,7 +484,7 @@ void convergence_information_t<i_t, f_t>::compute_dual_objective(
       <<<1, 1, 0, stream_view_>>>(dual_objective_.data(),
                                   problem_ptr->presolve_data.objective_scaling_factor,
                                   problem_ptr->presolve_data.objective_offset);
-    RAFT_CUDA_TRY(cudaPeekAtLastError());
+    RAFT_CUDA_TRY(hipPeekAtLastError());
   }
 
 #ifdef CUPDLP_DEBUG_MODE
@@ -454,12 +499,12 @@ void convergence_information_t<i_t, f_t>::compute_reduced_cost_from_primal_gradi
   raft::common::nvtx::range fun_scope("compute_reduced_cost_from_primal_gradient");
 
   using f_t2 = typename type_2<f_t>::type;
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(primal_gradient.data(), problem_ptr->variable_bounds.data()),
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(primal_gradient.data(), problem_ptr->variable_bounds.data())),
     bound_value_.data(),
     primal_size_h_,
     bound_value_gradient<f_t, f_t2>(),
-    stream_view_.value());
+    stream_view_.value()));
 
   if (pdlp_hyper_params::handle_some_primal_gradients_on_finite_bounds_as_residuals) {
     raft::linalg::ternaryOp(reduced_cost_.data(),
@@ -487,20 +532,20 @@ void convergence_information_t<i_t, f_t>::compute_reduced_costs_dual_objective_c
   using f_t2 = typename type_2<f_t>::type;
   // if reduced cost is positive -> lower bound, negative -> upper bounds, 0 -> 0
   // if bound_val is not finite let element be -inf, otherwise bound_value*reduced_cost
-  cub::DeviceTransform::Transform(
-    cuda::std::make_tuple(reduced_cost_.data(), problem_ptr->variable_bounds.data()),
+  RAFT_CUDA_TRY(hipcub::DeviceTransform::Transform(
+    thrust::make_zip_iterator(thrust::make_tuple(reduced_cost_.data(), problem_ptr->variable_bounds.data())),
     bound_value_.data(),
     primal_size_h_,
     bound_value_reduced_cost_product<f_t, f_t2>(),
-    stream_view_.value());
+    stream_view_.value()));
 
   // sum over bound_value*reduced_cost, but should be -inf if any element is -inf
-  cub::DeviceReduce::Sum(rmm_tmp_buffer_.data(),
+  RAFT_CUDA_TRY(hipcub::DeviceReduce::Sum(rmm_tmp_buffer_.data(),
                          size_of_buffer_,
                          bound_value_.begin(),
                          reduced_cost_dual_objective_.data(),
                          primal_size_h_,
-                         stream_view_);
+                         stream_view_));
 }
 
 template <typename i_t, typename f_t>

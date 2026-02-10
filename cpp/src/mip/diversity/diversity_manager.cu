@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -5,7 +6,7 @@
  */
 /* clang-format on */
 
-#include "cuda_profiler_api.h"
+#include "hip/hip_runtime_api.h"
 #include "diversity_manager.cuh"
 
 #include <mip/mip_constants.hpp>
@@ -790,7 +791,7 @@ void diversity_manager_t<i_t, f_t>::set_simplex_solution(const std::vector<f_t>&
 {
   CUOPT_LOG_DEBUG("Setting simplex solution with objective %f", objective);
   using sol_t = solution_t<i_t, f_t>;
-  RAFT_CUDA_TRY(cudaSetDevice(context.handle_ptr->get_device()));
+  RAFT_CUDA_TRY(hipSetDevice(context.handle_ptr->get_device()));
   context.handle_ptr->sync_stream();
   cuopt_func_call(sol_t new_sol(*problem_ptr));
   cuopt_assert(new_sol.assignment.size() == solution.size(), "Assignment size mismatch");

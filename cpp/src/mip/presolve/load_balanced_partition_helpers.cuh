@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -148,7 +149,7 @@ void bin_vertices(rmm::device_uvector<i_t>& reorg_vertices,
                   const i_t* offsets,
                   i_t vertex_begin,
                   i_t vertex_end,
-                  cudaStream_t stream)
+                  hipStream_t stream)
 {
   const unsigned BLOCK_SIZE = 512;
   unsigned blocks           = ((vertex_end - vertex_begin) + BLOCK_SIZE - 1) / BLOCK_SIZE;

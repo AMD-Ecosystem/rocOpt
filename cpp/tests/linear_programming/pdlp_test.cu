@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /* clang-format off */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -276,7 +277,7 @@ TEST(pdlp_class, initial_solution_test)
     cuopt::linear_programming::detail::pdlp_solver_t<int, double> solver(problem, solver_settings);
     auto pdlp_timer = timer_t(solver_settings.time_limit);
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
   }
@@ -290,7 +291,7 @@ TEST(pdlp_class, initial_solution_test)
     auto d_initial_primal = device_copy(initial_primal, handle_.get_stream());
     solver.set_initial_primal_solution(d_initial_primal);
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
   }
@@ -301,7 +302,7 @@ TEST(pdlp_class, initial_solution_test)
     auto d_initial_dual = device_copy(initial_dual, handle_.get_stream());
     solver.set_initial_dual_solution(d_initial_dual);
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
   }
@@ -315,7 +316,7 @@ TEST(pdlp_class, initial_solution_test)
     auto d_initial_dual = device_copy(initial_dual, handle_.get_stream());
     solver.set_initial_dual_solution(d_initial_dual);
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
   }
@@ -326,7 +327,7 @@ TEST(pdlp_class, initial_solution_test)
     auto pdlp_timer = timer_t(solver_settings.time_limit);
     cuopt::linear_programming::pdlp_hyper_params::update_step_size_on_initial_solution = true;
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
     cuopt::linear_programming::pdlp_hyper_params::update_step_size_on_initial_solution = false;
@@ -336,7 +337,7 @@ TEST(pdlp_class, initial_solution_test)
     auto pdlp_timer = timer_t(solver_settings.time_limit);
     cuopt::linear_programming::pdlp_hyper_params::update_primal_weight_on_initial_solution = true;
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
     cuopt::linear_programming::pdlp_hyper_params::update_primal_weight_on_initial_solution = false;
@@ -347,7 +348,7 @@ TEST(pdlp_class, initial_solution_test)
     cuopt::linear_programming::pdlp_hyper_params::update_primal_weight_on_initial_solution = true;
     cuopt::linear_programming::pdlp_hyper_params::update_step_size_on_initial_solution     = true;
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
     cuopt::linear_programming::pdlp_hyper_params::update_primal_weight_on_initial_solution = false;
@@ -364,7 +365,7 @@ TEST(pdlp_class, initial_solution_test)
     auto d_initial_primal = device_copy(initial_primal, handle_.get_stream());
     solver.set_initial_primal_solution(d_initial_primal);
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
     cuopt::linear_programming::pdlp_hyper_params::update_step_size_on_initial_solution = false;
@@ -377,7 +378,7 @@ TEST(pdlp_class, initial_solution_test)
     auto d_initial_dual = device_copy(initial_dual, handle_.get_stream());
     solver.set_initial_dual_solution(d_initial_dual);
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NEAR(initial_step_size_afiro, solver.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(initial_primal_weight_afiro, solver.get_primal_weight_h(), factor_tolerance);
     cuopt::linear_programming::pdlp_hyper_params::update_step_size_on_initial_solution = false;
@@ -552,7 +553,7 @@ TEST(pdlp_class, initial_primal_weight_step_size_test)
     solver.set_initial_primal_weight(test_initial_primal_weight);
     solver.set_initial_step_size(test_initial_step_size);
     solver.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_EQ(test_initial_step_size, solver.get_step_size_h());
     EXPECT_EQ(test_initial_primal_weight, solver.get_primal_weight_h());
   }
@@ -585,7 +586,7 @@ TEST(pdlp_class, initial_primal_weight_step_size_test)
     solver2.set_initial_primal_solution(d_initial_primal);
     solver2.set_initial_dual_solution(d_initial_dual);
     solver2.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     const double sovler2_step_size     = solver2.get_step_size_h();
     const double sovler2_primal_weight = solver2.get_primal_weight_h();
     EXPECT_NOT_NEAR(previous_step_size, sovler2_step_size, factor_tolerance);
@@ -601,7 +602,7 @@ TEST(pdlp_class, initial_primal_weight_step_size_test)
     solver3.set_initial_dual_solution(d_initial_dual);
     solver3.set_initial_dual_solution(d_initial_dual);
     solver3.run_solver(pdlp_timer);
-    RAFT_CUDA_TRY(cudaStreamSynchronize(handle_.get_stream()));
+    RAFT_CUDA_TRY(hipStreamSynchronize(handle_.get_stream()));
     EXPECT_NOT_NEAR(sovler2_step_size, solver3.get_step_size_h(), factor_tolerance);
     EXPECT_NEAR(sovler2_primal_weight, solver3.get_primal_weight_h(), factor_tolerance);
   }
@@ -736,11 +737,11 @@ TEST(pdlp_class, best_primal_so_far_iteration)
 
   optimization_problem_solution_t<int, double> solution1 =
     solve_lp(&handle1, op_problem1, solver_settings);
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   solver_settings.save_best_primal_so_far = true;
   optimization_problem_solution_t<int, double> solution2 =
     solve_lp(&handle2, op_problem2, solver_settings);
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
 
   EXPECT_TRUE(solution2.get_additional_termination_information().l2_primal_residual <
               solution1.get_additional_termination_information().l2_primal_residual);
@@ -766,11 +767,11 @@ TEST(pdlp_class, best_primal_so_far_time)
 
   optimization_problem_solution_t<int, double> solution1 =
     solve_lp(&handle1, op_problem1, solver_settings);
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   solver_settings.save_best_primal_so_far = true;
   optimization_problem_solution_t<int, double> solution2 =
     solve_lp(&handle2, op_problem2, solver_settings);
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
 
   EXPECT_TRUE(solution2.get_additional_termination_information().l2_primal_residual <
               solution1.get_additional_termination_information().l2_primal_residual);
@@ -796,11 +797,11 @@ TEST(pdlp_class, first_primal_feasible)
 
   optimization_problem_solution_t<int, double> solution1 =
     solve_lp(&handle1, op_problem1, solver_settings);
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
   solver_settings.first_primal_feasible = true;
   optimization_problem_solution_t<int, double> solution2 =
     solve_lp(&handle2, op_problem2, solver_settings);
-  RAFT_CUDA_TRY(cudaDeviceSynchronize());
+  RAFT_CUDA_TRY(hipDeviceSynchronize());
 
   EXPECT_EQ(solution1.get_termination_status(), pdlp_termination_status_t::IterationLimit);
   EXPECT_EQ(solution2.get_termination_status(), pdlp_termination_status_t::PrimalFeasible);
