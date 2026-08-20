@@ -8,6 +8,22 @@
 
 #pragma once
 
+#define CUOPT_KERNEL_DEBUG 0
+#if CUOPT_KERNEL_DEBUG
+#define CUOPT_KERNEL_TRACE(name, ...) \
+  do { fprintf(stderr, "[KERNEL] " name " " __VA_ARGS__); fprintf(stderr, "\n"); } while(0)
+#define CUOPT_KERNEL_SYNC_CHECK(name, stream) \
+  do { \
+    hipStreamSynchronize(stream); \
+    auto _err = hipGetLastError(); \
+    if (_err != hipSuccess) fprintf(stderr, "[CRASH] " name ": %s\n", hipGetErrorString(_err)); \
+    else fprintf(stderr, "[KERNEL] " name " OK\n"); \
+  } while(0)
+#else
+#define CUOPT_KERNEL_TRACE(name, ...)
+#define CUOPT_KERNEL_SYNC_CHECK(name, stream)
+#endif
+
 #include <utilities/macros.cuh>
 
 #include <thrust/host_vector.h>
@@ -84,6 +100,15 @@ namespace cuopt {
 #define HDI inline __host__ __device__
 #define HD  __host__ __device__
 
+DI int popcount_active_mask()
+{
+#if defined(__HIP_PLATFORM_AMD__)
+  return __popcll(__activemask());
+#else
+  return __popc(__activemask());
+#endif
+}
+
 /**
  * For Pascal independent thread scheduling is not supported so we are using a seperate
  * add version. This version will return when there are duplicates instead of
@@ -92,21 +117,29 @@ namespace cuopt {
  * accuracy trade-offs. Hence the seperate add function for Pascal.
  **/
 template <typename i_t>
+DI bool try_acquire_lock(i_t* lock)
+{
+  auto res = atomicCAS(lock, 0, 1);
+  if (res == 0) { __threadfence(); return true; }
+  return false;
+}
+
+template <typename i_t>
 DI bool acquire_lock(i_t* lock)
 {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 700)
+#if defined(__HIP_PLATFORM_AMD__)
+  if (atomicCAS(lock, 0, 1) == 0) {
+    __threadfence();
+    return true;
+  }
+  return false;
+#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 700)
   auto res = atomicCAS(lock, 0, 1);
   __threadfence();
   return res == 0;
 #else
   while (atomicCAS(lock, 0, 1)) {
-#ifdef __HIP_PLATFORM_AMD__
-    // ROCm: Use s_sleep (sleep for ~100 cycles)
-    // __builtin_amdgcn_s_sleep takes cycles/64 as argument
-    __builtin_amdgcn_s_sleep(2); // ~128 cycles
-#else
     __nanosleep(100);
-#endif
   }
   __threadfence();
   return true;
@@ -131,16 +164,17 @@ DI bool try_acquire_lock_block(i_t* lock)
 template <typename i_t>
 DI bool acquire_lock_block(i_t* lock)
 {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 700)
+#if defined(__HIP_PLATFORM_AMD__)
+  if (atomicCAS_block(lock, 0, 1) == 0) {
+    __threadfence_block();
+    return true;
+  }
+  return false;
+#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 700)
   return try_acquire_lock_block(lock);
 #else
   while (atomicCAS_block(lock, 0, 1)) {
-#ifdef __HIP_PLATFORM_AMD__
-    // ROCm: Use s_sleep (sleep for ~100 cycles)
-    __builtin_amdgcn_s_sleep(2); // ~128 cycles
-#else
     __nanosleep(100);
-#endif
   }
   __threadfence_block();
   return true;
@@ -152,6 +186,52 @@ DI void release_lock_block(i_t* lock)
 {
   __threadfence_block();
   atomicExch_block(lock, 0);
+}
+
+// Lock wrapper that retries until the lock is acquired.
+// On AMD the try-lock may fail under contention because a blocking spin
+// would deadlock threads within the same wavefront.  Retrying at the
+// caller level avoids this: the lock holder releases inside the loop body
+// (before the for-loop reconvergence point), so other threads in the same
+// wavefront see the lock freed on their next iteration.
+template <typename i_t, typename F>
+DI void with_lock(i_t* lock, F&& critical_section)
+{
+#if defined(__HIP_PLATFORM_AMD__)
+  for (int _retry = 0; _retry < 4096; ++_retry) {
+    if (acquire_lock(lock)) {
+      critical_section();
+      release_lock(lock);
+      return;
+    }
+    __builtin_amdgcn_s_sleep(8);
+  }
+#else
+  if (acquire_lock(lock)) {
+    critical_section();
+    release_lock(lock);
+  }
+#endif
+}
+
+template <typename i_t, typename F>
+DI void with_lock_block(i_t* lock, F&& critical_section)
+{
+#if defined(__HIP_PLATFORM_AMD__)
+  for (int _retry = 0; _retry < 4096; ++_retry) {
+    if (acquire_lock_block(lock)) {
+      critical_section();
+      release_lock_block(lock);
+      return;
+    }
+    __builtin_amdgcn_s_sleep(8);
+  }
+#else
+  if (acquire_lock_block(lock)) {
+    critical_section();
+    release_lock_block(lock);
+  }
+#endif
 }
 
 template <typename T>
@@ -239,6 +319,16 @@ HDI To bit_cast(const From& src)
   return *(To*)(&src);
 }
 
+inline int get_device_max_shmem_per_block()
+{
+  int device_id = 0;
+  RAFT_CUDA_TRY(hipGetDevice(&device_id));
+  int max_shmem = 0;
+  RAFT_CUDA_TRY(
+    hipDeviceGetAttribute(&max_shmem, hipDeviceAttributeMaxSharedMemoryPerBlock, device_id));
+  return max_shmem;
+}
+
 template <typename Function>
 inline bool set_shmem_of_kernel(Function* function, size_t dynamic_request_size)
 {
@@ -253,8 +343,37 @@ inline bool set_shmem_of_kernel(Function* function, size_t dynamic_request_size)
       current_size = shmem_sizes[function];
 
       if (dynamic_request_size > current_size) {
+#if defined(__HIP_PLATFORM_AMD__)
+        int device_id = 0;
+        RAFT_CUDA_TRY(hipGetDevice(&device_id));
+        int max_shmem = 0;
+        RAFT_CUDA_TRY(hipDeviceGetAttribute(
+          &max_shmem, hipDeviceAttributeMaxSharedMemoryPerBlock, device_id));
+        hipFuncAttributes func_attr{};
+        hipFuncGetAttributes(&func_attr, reinterpret_cast<const void*>(function));
+        int static_shmem = func_attr.sharedSizeBytes;
+        int available     = max_shmem - static_shmem;
+        if (available < 0 || static_cast<int>(dynamic_request_size) > available) {
+          fprintf(stderr,
+                  "[cuopt] WARNING: kernel %p skipped: needs %zu + %d = %zu bytes shmem, "
+                  "device max = %d\n",
+                  reinterpret_cast<const void*>(function),
+                  dynamic_request_size,
+                  static_shmem,
+                  dynamic_request_size + static_shmem,
+                  max_shmem);
+          return false;
+        }
+        auto attr_err = hipFuncSetAttribute(reinterpret_cast<const void*>(function),
+                                            hipFuncAttributeMaxDynamicSharedMemorySize,
+                                            dynamic_request_size);
+        if (attr_err != hipSuccess) {
+          hipGetLastError();
+        }
+#else
         RAFT_CUDA_TRY(hipFuncSetAttribute(reinterpret_cast<const void*>(
           function), hipFuncAttributeMaxDynamicSharedMemorySize, dynamic_request_size));
+#endif
         shmem_sizes[function] = dynamic_request_size;
         return (hipSuccess == hipGetLastError());
       }

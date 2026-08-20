@@ -137,6 +137,12 @@ __global__ void calc_activity_kernel(typename problem_t<i_t, f_t>::view_t pb,
 template <typename i_t, typename f_t>
 inline __device__ bool check_infeasibility(f_t min_a, f_t max_a, f_t cnst_lb, f_t cnst_ub, f_t eps)
 {
+  // Guard against false infeasibility from floating-point rounding in GPU
+  // activity sums.  BlockReduce tree ordering can differ across GPU
+  // architectures (e.g. cub vs hipcub), producing small numerical
+  // differences proportional to the activity magnitude.
+  f_t act_mag = max(raft::abs(min_a), raft::abs(max_a));
+  if (isfinite(act_mag)) { eps = max(eps, act_mag * f_t(1e-10)); }
   return (min_a > cnst_ub + eps) || (max_a < cnst_lb - eps);
 }
 
@@ -145,6 +151,12 @@ inline __device__ bool check_infeasibility(
   f_t min_a, f_t max_a, f_t cnst_lb, f_t cnst_ub, f_t abs_tol, f_t rel_tol)
 {
   auto eps = get_cstr_tolerance<i_t, f_t>(cnst_lb, cnst_ub, abs_tol, rel_tol);
+  // Guard against false infeasibility from floating-point rounding in GPU
+  // activity sums.  BlockReduce tree ordering can differ across GPU
+  // architectures (e.g. cub vs hipcub), producing small numerical
+  // differences proportional to the activity magnitude.
+  f_t act_mag = max(raft::abs(min_a), raft::abs(max_a));
+  if (isfinite(act_mag)) { eps = max(eps, act_mag * f_t(1e-10)); }
   return (min_a > cnst_ub + eps) || (max_a < cnst_lb - eps);
 }
 

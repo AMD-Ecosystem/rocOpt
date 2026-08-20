@@ -55,7 +55,8 @@ struct time_it {
 auto constexpr write_diagonal = true;
 
 template <int TPB, typename i_t>
-__global__ void top_k_indices(i_t width,
+__global__ __launch_bounds__(TPB, 1)
+void top_k_indices(i_t width,
                               raft::device_span<const double> row_costs,
                               raft::device_span<double> out_costs,
                               raft::device_span<i_t> out_indices)
@@ -106,7 +107,6 @@ class top_cand_test_t : public routing_test_t<i_t, f_t>, public ::testing::TestW
 
     raft::copy(d_input_cost.data(), h_input_cost.data(), h_input_cost.size(), this->stream_view_);
 
-    this->stream_view_.synchronize();
     call_top_k(d_input_cost, d_output_cost, d_out_index);
 
     verify_top_k(h_input_cost, d_output_cost, d_out_index);

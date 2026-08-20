@@ -64,11 +64,11 @@ __global__ void get_best_move_per_route(
       auto updated_cand = prize_cand_t(
         pickup_insertion, delivery_insertion, ejected_node_id, insertion_node_id, cost_delta);
 
-      acquire_lock(&route_locks[route_id]);
-      if (curr_cand.cost_counter.cost < best_cand_per_route[route_id].cost) {
-        best_cand_per_route[route_id] = updated_cand;
-      }
-      release_lock(&route_locks[route_id]);
+      with_lock(&route_locks[route_id], [&]() {
+        if (curr_cand.cost_counter.cost < best_cand_per_route[route_id].cost) {
+          best_cand_per_route[route_id] = updated_cand;
+        }
+      });
     }
   }
 }

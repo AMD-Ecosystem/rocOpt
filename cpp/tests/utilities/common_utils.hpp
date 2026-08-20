@@ -52,16 +52,8 @@ inline std::vector<std::string> read_tests(const std::string& ref_file)
   std::ifstream infile(test_file.c_str());
   cuopt_assert(infile.is_open(), "Ref file cannot be opened");
   std::vector<std::string> param_tests;
-  // assume relative paths are relative to RAPIDS_DATASET_ROOT_DIR
-  const std::string& rapidsDatasetRootDir = cuopt::test::get_rapids_dataset_root_dir();
   for (std::string line; getline(infile, line);) {
-    std::string file{};
-    if ((line != "") && (line[0] != '/')) {
-      file = rapidsDatasetRootDir + "/" + line;
-    } else {
-      file = line;
-    }
-    param_tests.emplace_back(std::move(file));
+    if (!line.empty()) { param_tests.emplace_back(std::move(line)); }
   }
   return param_tests;
 }

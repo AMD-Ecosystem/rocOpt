@@ -12,6 +12,7 @@ ConfigureTest(OBJECTIVE_FUNCTION_TEST ${CMAKE_CURRENT_SOURCE_DIR}/level0/l0_obje
 
 # ##################################################################################################
 # - L1 advanced retail tests --------------------------------------------------------------------------
+# NOTE(ROCm): RANDOM distribution is excluded in l1_retail_test.cu (solver returns INFEASIBLE)
 ConfigureTest(RETAIL_L1TEST ${CMAKE_CURRENT_SOURCE_DIR}/level1/l1_retail_test.cu)
 
 # ##################################################################################################

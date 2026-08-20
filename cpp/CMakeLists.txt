@@ -18,8 +18,8 @@ if(USE_ROCM)
             set(ROCM_PATH $ENV{ROCM_PATH} CACHE PATH "Path to ROCm installation")
         else()
             # Try common ROCm installation paths
-            if(EXISTS "/opt/rocm-7.1.1")
-                set(ROCM_PATH "/opt/rocm-7.1.1" CACHE PATH "Path to ROCm installation")
+            if(EXISTS "/opt/rocm")
+                set(ROCM_PATH "/opt/rocm" CACHE PATH "Path to ROCm installation")
             elseif(EXISTS "/opt/rocm")
                 set(ROCM_PATH "/opt/rocm" CACHE PATH "Path to ROCm installation")
             else()
@@ -64,26 +64,49 @@ if(USE_ROCM)
     
     message(STATUS "CMAKE_PREFIX_PATH set before ROCm-DS: ${CMAKE_PREFIX_PATH}")
     
-    # ROCm-DS rapids-cmake integration using FetchContent
-    # Use HTTPS with credentials from environment variables
-    # Set: export GH_USERNAME=your_github_username
-    #      export GH_TOKEN=your_personal_access_token
+    # ROCm-DS rapids-cmake: https://github.com/ROCm-DS/ROCmDS-CMake (release/rocmds-26.03)
+    # This is the open-source ROCm-DS CMake module collection; an anonymous
+    # HTTPS clone works and no credentials are required.
     include(FetchContent)
-    
-    # Construct URL with credentials if provided
-    if(DEFINED ENV{GH_USERNAME} AND DEFINED ENV{GH_TOKEN})
-        set(RAPIDS_CMAKE_REPO "https://$ENV{GH_USERNAME}:$ENV{GH_TOKEN}@github.com/AMD-AIOSS/ROCmDS-cmake.git")
-        message(STATUS "Using authenticated HTTPS access to AMD-AIOSS/ROCmDS-cmake")
-    else()
-        # Fallback to unauthenticated (will fail for private repos)
-        set(RAPIDS_CMAKE_REPO "https://github.com/AMD-AIOSS/ROCmDS-cmake.git")
-        message(WARNING "GH_USERNAME and/or GH_TOKEN not set - clone may fail for private repo")
+
+    # Allow a pre-cloned local copy to bypass the GitHub fetch entirely.
+    # Set ROCMDS_CMAKE_LOCAL_PATH (a valid shell variable name, no dashes) to the
+    # path of a local ROCmDS-CMake checkout.  This is checked before building the
+    # GitHub URL so no network access is needed when the variable is set.
+    if(DEFINED ENV{ROCMDS_CMAKE_LOCAL_PATH} AND NOT "$ENV{ROCMDS_CMAKE_LOCAL_PATH}" STREQUAL "")
+        set(ROCMDS_CMAKE_LOCAL_PATH "$ENV{ROCMDS_CMAKE_LOCAL_PATH}")
+        if(EXISTS "${ROCMDS_CMAKE_LOCAL_PATH}" AND IS_DIRECTORY "${ROCMDS_CMAKE_LOCAL_PATH}")
+            set(FETCHCONTENT_SOURCE_DIR_RAPIDS-CMAKE "${ROCMDS_CMAKE_LOCAL_PATH}" CACHE PATH "")
+            message(STATUS "Using local ROCmDS-CMake: ${ROCMDS_CMAKE_LOCAL_PATH}")
+        else()
+            message(FATAL_ERROR
+                "ROCMDS_CMAKE_LOCAL_PATH is set to '${ROCMDS_CMAKE_LOCAL_PATH}', "
+                "but that path does not exist or is not a directory. "
+                "Please set it to a valid local ROCmDS-CMake checkout.")
+        endif()
     endif()
-    
+
+    # Default to the public ROCm-DS org.  The org can be overridden via
+    # RAPIDS_CMAKE_ROCM_DS_ORG (e.g. to point at a private fork); when
+    # GH_USERNAME / GH_TOKEN are also set, credentials are injected so an
+    # authenticated clone of such a fork still works.
+    if(DEFINED ENV{RAPIDS_CMAKE_ROCM_DS_ORG} AND NOT "$ENV{RAPIDS_CMAKE_ROCM_DS_ORG}" STREQUAL "")
+        set(_rocmds_cmake_org "$ENV{RAPIDS_CMAKE_ROCM_DS_ORG}")
+    else()
+        set(_rocmds_cmake_org "ROCm-DS")
+    endif()
+    if(DEFINED ENV{GH_USERNAME} AND DEFINED ENV{GH_TOKEN})
+        set(RAPIDS_CMAKE_REPO "https://$ENV{GH_USERNAME}:$ENV{GH_TOKEN}@github.com/${_rocmds_cmake_org}/ROCmDS-CMake.git")
+        message(STATUS "Using authenticated HTTPS access to ${_rocmds_cmake_org}/ROCmDS-CMake")
+    else()
+        set(RAPIDS_CMAKE_REPO "https://github.com/${_rocmds_cmake_org}/ROCmDS-CMake.git")
+        message(STATUS "Using public ROCm-DS rapids-cmake from ${_rocmds_cmake_org}/ROCmDS-CMake")
+    endif()
+
     FetchContent_Declare(
       rapids-cmake
       GIT_REPOSITORY ${RAPIDS_CMAKE_REPO}
-      GIT_TAG feat/upgrade_to_25.10
+      GIT_TAG release/rocmds-26.03
     )
     FetchContent_MakeAvailable(rapids-cmake)
     
@@ -126,7 +149,7 @@ endif()
 if(USE_ROCM)
     project(
       CUOPT
-      VERSION "26.01.0"
+      VERSION "1.0.0"
       LANGUAGES CXX C HIP
     )
 else()
@@ -166,8 +189,8 @@ if(USE_ROCM)
             set(ROCM_PATH $ENV{ROCM_PATH})
         else()
             # Try common ROCm installation paths (same as earlier)
-            if(EXISTS "/opt/rocm-7.1.1")
-                set(ROCM_PATH "/opt/rocm-7.1.1")
+            if(EXISTS "/opt/rocm")
+                set(ROCM_PATH "/opt/rocm")
             elseif(EXISTS "/opt/rocm")
                 set(ROCM_PATH "/opt/rocm")
             else()
@@ -218,8 +241,8 @@ endif()
 
 if(USE_ROCM)
     # Write ROCm version file
-    set(VERSION_MAJOR 26)
-    set(VERSION_MINOR 01)
+    set(VERSION_MAJOR 1)
+    set(VERSION_MINOR 0)
     set(VERSION_PATCH 0)
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/include/cuopt/version_config.hpp.in
@@ -344,7 +367,7 @@ message("-- Building with logging level = ${LIBCUOPT_LOGGING_LEVEL}")
 if(USE_ROCM)
     # HIP architecture configuration
     if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
-        set(CMAKE_HIP_ARCHITECTURES "gfx90a;gfx908;gfx942" CACHE STRING "HIP architectures")
+        set(CMAKE_HIP_ARCHITECTURES "gfx90a;gfx908;gfx942;gfx950" CACHE STRING "HIP architectures")
     endif()
     message("-- Building for HIP_ARCHS = '${CMAKE_HIP_ARCHITECTURES}'")
     
@@ -444,9 +467,32 @@ endif()
 
 if(USE_ROCM)
     # ROCm-DS RAPIDS dependencies
+    if(NOT "$ENV{RAPIDS_CMAKE_ROCM_ORG}" STREQUAL "")
+        set(rapids-cmake-rocm-org "$ENV{RAPIDS_CMAKE_ROCM_ORG}")
+    else()
+        set(rapids-cmake-rocm-org "ROCm")
+    endif()
+    if(NOT "$ENV{RAPIDS_CMAKE_ROCM_DS_ORG}" STREQUAL "")
+        set(rapids-cmake-rocm-ds-org "$ENV{RAPIDS_CMAKE_ROCM_DS_ORG}")
+    else()
+        set(rapids-cmake-rocm-ds-org "ROCm-DS")
+    endif()
     rapids_cpm_init()
     rapids_cmake_install_lib_dir(lib_dir)
-    
+
+    # Pin rocmds_logger to the public ROCm-DS/ROCmDS-Logger repo on
+    # release/rocmds-26.03.  In 26.03 the logger became a real prebuilt library
+    # (target rapids_logger::rapids_logger, header <rapids_logger/logger.hpp>)
+    # and exposes create_logger_macros() — which 26.03 hipRaft and hipMM both
+    # require (the logger CMakeLists include()s cmake/create_logger_macros.cmake
+    # on a CPM source build, making it globally available).  The older 25.10
+    # logger lacked create_logger_macros (raft failed with "Unknown CMake
+    # command create_logger_macros"); conversely the 26.03 logger dropped the
+    # rapids_make_logger() templates, so all consumers here are on 26.03 and link
+    # rapids_logger::rapids_logger directly instead of calling rapids_make_logger.
+    include(${rapids-cmake_SOURCE_DIR}/rapids-cmake/cpm/package_override.cmake)
+    rapids_cpm_package_override(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rocopt_versions_override.json)
+
     message(STATUS "Using ROCm-DS rapids modules for dependencies")
     
     # === PLAIN spdlog: Just use rapids_logger like NVIDIA ===
@@ -455,8 +501,16 @@ if(USE_ROCM)
     set(SPDLOG_USE_STD_FORMAT OFF CACHE BOOL "Force spdlog to use fmt library, not std::format" FORCE)
     message(STATUS "🔧 SPDLOG_USE_STD_FORMAT=OFF (forcing fmt library usage)")
     
+    # Force CPM to download spdlog/fmt from source rather than using find_package().
+    # Base miniforge3 has spdlog cmake configs that cause CPM to skip downloading,
+    # but the build expects spdlog sources with bundled fmt at _deps/spdlog-src/include/.
+    set(CPM_DOWNLOAD_spdlog ON CACHE BOOL "Force CPM to fetch spdlog" FORCE)
+    set(CPM_DOWNLOAD_fmt ON CACHE BOOL "Force CPM to fetch fmt" FORCE)
+    
     include(${rapids-cmake_SOURCE_DIR}/rapids-cmake/cpm/rocmds_logger.cmake)
-    rapids_cpm_rapids_logger()
+    # Add to cuopt-exports so the PUBLIC link of rapids_logger::rapids_logger on
+    # libcuopt below is satisfiable when cuopt-exports is installed/exported.
+    rapids_cpm_rapids_logger(BUILD_EXPORT_SET cuopt-exports INSTALL_EXPORT_SET cuopt-exports)
     
     # Use spdlog with BUNDLED fmt to avoid compatibility issues with system/conda fmt 12.0+
     # fmt 11+ moved basic_format_string from core.h to base.h, breaking older spdlog versions
@@ -466,14 +520,14 @@ if(USE_ROCM)
                       INSTALL_EXPORT_SET cuopt-exports)
     message(STATUS "✅ spdlog fetched with bundled fmt")
     
-    rapids_make_logger(rapids_logger
-        EXPORT_SET cuopt-exports
-        LOGGER_DEFAULT_LEVEL INFO
-        LOGGER_HEADER_DIR include/rapids_logger
-    )
-    message(STATUS "✅ rapids_logger configured")
+    # NOTE: the 26.03 rapids_logger is a real prebuilt library exposed as the
+    # rapids_logger::rapids_logger target (created by rapids_cpm_rapids_logger()
+    # above).  We link that directly below instead of calling rapids_make_logger(),
+    # which is non-functional in 26.03 (its logger.hpp.in/logger_impl.hpp.in/
+    # logger.cpp.in templates were removed when the logger became a real library).
+    message(STATUS "✅ rapids_logger configured (rapids_logger::rapids_logger)")
     
-    # CRITICAL FIX: Patch spdlog/common.h AFTER fetch (rapids_make_logger fetches spdlog internally)
+    # CRITICAL FIX: Patch spdlog/common.h AFTER fetch (rapids_cpm_spdlog fetched it above)
     # Even though SPDLOG_USE_STD_FORMAT=OFF, the header still includes <format> which pollutes namespace
     set(SPDLOG_COMMON_H "${CMAKE_CURRENT_BINARY_DIR}/_deps/spdlog-src/include/spdlog/common.h")
     if(EXISTS "${SPDLOG_COMMON_H}")
@@ -546,11 +600,14 @@ if(USE_ROCM)
         )
     endif()
     
-    set(BUILD_TESTING OFF CACHE BOOL "Disable test build for papilo")
+    set(BUILD_TESTING OFF CACHE BOOL "Disable test build for papilo" FORCE)
     set(PAPILO_NO_BINARIES ON)
     option(LUSOL "Disable LUSOL" OFF)
     
     FetchContent_MakeAvailable(papilo)
+    
+    # Restore BUILD_TESTING so cuopt's own tests aren't affected
+    set(BUILD_TESTING ON CACHE BOOL "Re-enable after papilo" FORCE)
     
     # Note: papilo fmt headers are already patched in the local papilo_patched directory
     # The patches include: redirect all fmt headers to spdlog's bundled fmt,
@@ -569,7 +626,7 @@ if(USE_ROCM)
     find_and_configure_rmm()
     find_and_configure_raft(VERSION  0.1.0
             FORK                     ROCm-DS
-            PINNED_TAG               release/rocmds-25.10
+            PINNED_TAG               release/rocmds-26.03
             COMPILE_LIBRARY          OFF
             ENABLE_MNMG_DEPENDENCIES OFF
     )
@@ -580,8 +637,12 @@ if(USE_ROCM)
     # raft_SOURCE_DIR after downloading.  Depending on CPM version and
     # SOURCE_SUBDIR, it may point to the repo root or to the "cpp" subdir.
     # We try both to be robust.
+    #
+    # If RAFT was found as a pre-installed package (conda/system), there is
+    # no raft_SOURCE_DIR.  In that case we derive the include root from
+    # raft_DIR (the cmake config directory, typically <prefix>/lib/cmake/raft).
     set(_RAFT_INCLUDE_ROOT "")
-    if(DEFINED raft_SOURCE_DIR)
+    if(DEFINED raft_SOURCE_DIR AND NOT raft_SOURCE_DIR STREQUAL "")
         if(EXISTS "${raft_SOURCE_DIR}/include/raft/cuda_runtime.h")
             # raft_SOURCE_DIR already points to the cpp subdirectory
             set(_RAFT_INCLUDE_ROOT "${raft_SOURCE_DIR}/include")
@@ -596,11 +657,19 @@ if(USE_ROCM)
             set(_RAFT_INCLUDE_ROOT "${CMAKE_BINARY_DIR}/_deps/raft-src/cpp/include")
         endif()
     endif()
+    # Fallback: pre-installed package (conda/system) — derive from raft_DIR
+    if(NOT _RAFT_INCLUDE_ROOT AND DEFINED raft_DIR)
+        # raft_DIR is typically <prefix>/lib/cmake/raft
+        get_filename_component(_raft_prefix "${raft_DIR}/../../.." ABSOLUTE)
+        if(EXISTS "${_raft_prefix}/include/raft/cuda_runtime.h")
+            set(_RAFT_INCLUDE_ROOT "${_raft_prefix}/include")
+        endif()
+    endif()
     
     if(_RAFT_INCLUDE_ROOT)
         message(STATUS "RAFT include root resolved to: ${_RAFT_INCLUDE_ROOT}")
     else()
-        message(WARNING "⚠️ Could not resolve RAFT include root (raft_SOURCE_DIR=${raft_SOURCE_DIR}) - patching will be skipped")
+        message(STATUS "ℹ️ Could not resolve RAFT include root — RAFT is likely pre-installed (conda/system) with patches already applied. Skipping patching.")
     endif()
     
     # CRITICAL FIX: Patch RAFT's mdspan to skip std::assume_aligned on ROCm
@@ -624,7 +693,9 @@ if(USE_ROCM)
             message(STATUS "✅ RAFT's aligned_accessor.hpp already patched")
         endif()
     else()
-        message(WARNING "Could not find aligned_accessor.hpp to patch (looked at ${ALIGNED_ACCESSOR_FILE})")
+        if(_RAFT_INCLUDE_ROOT)
+            message(WARNING "Could not find aligned_accessor.hpp to patch (looked at ${ALIGNED_ACCESSOR_FILE})")
+        endif()
     endif()
     
     # CRITICAL FIX: Patch RAFT's cuda_runtime.h for correct HIP device attribute names
@@ -642,7 +713,9 @@ if(USE_ROCM)
         file(WRITE "${RAFT_CUDA_RUNTIME_H}" "${RAFT_CUDA_RUNTIME_CONTENT}")
         message(STATUS "✅ Patched RAFT's cuda_runtime.h - fixed hipDeviceAttributeMemoryPoolSupportedHandleTypes")
     else()
-        message(WARNING "⚠️ RAFT's cuda_runtime.h not found at ${RAFT_CUDA_RUNTIME_H} - cannot patch!")
+        if(_RAFT_INCLUDE_ROOT)
+            message(WARNING "⚠️ RAFT's cuda_runtime.h not found at ${RAFT_CUDA_RUNTIME_H} - cannot patch!")
+        endif()
     endif()
     
     # CRITICAL FIX: Patch RAFT's cudart_utils.hpp to add missing 'inline' on
@@ -664,8 +737,47 @@ if(USE_ROCM)
         else()
             message(STATUS "✅ RAFT's cudart_utils.hpp already patched")
         endif()
+
+        # CRITICAL FIX: Replace cudaMemcpyDefault with explicit direction detection in raft::copy.
+        # hipMemcpyAsync with hipMemcpyDefault can fail with hipErrorInvalidValue on pageable
+        # host memory in some ROCm versions. Detect pointer types explicitly and clear
+        # stale HIP error state from hipPointerGetAttributes on unregistered host pointers.
+        file(READ "${RAFT_CUDART_UTILS_H}" CUDART_UTILS_CONTENT)
+        string(FIND "${CUDART_UTILS_CONTENT}" "__HIP_PLATFORM_AMD__  // raft::copy direction fix" COPY_ALREADY_PATCHED)
+        if(COPY_ALREADY_PATCHED EQUAL -1)
+            set(RAFT_COPY_OLD "RAFT_CUDA_TRY(cudaMemcpyAsync(dst, src, len * sizeof(Type), cudaMemcpyDefault, stream))")
+            set(RAFT_COPY_NEW [=[
+#ifdef __HIP_PLATFORM_AMD__  // raft::copy direction fix
+  hipPointerAttribute_t dst_attr{}, src_attr{};
+  auto dst_err = hipPointerGetAttributes(&dst_attr, dst);
+  if (dst_err != hipSuccess) hipGetLastError();
+  auto src_err = hipPointerGetAttributes(&src_attr, src);
+  if (src_err != hipSuccess) hipGetLastError();
+  bool dst_on_dev =
+    (dst_err == hipSuccess &&
+     (dst_attr.type == hipMemoryTypeDevice || dst_attr.type == hipMemoryTypeUnified));
+  bool src_on_dev =
+    (src_err == hipSuccess &&
+     (src_attr.type == hipMemoryTypeDevice || src_attr.type == hipMemoryTypeUnified));
+  hipMemcpyKind kind;
+  if (dst_on_dev && src_on_dev) kind = hipMemcpyDeviceToDevice;
+  else if (dst_on_dev) kind = hipMemcpyHostToDevice;
+  else if (src_on_dev) kind = hipMemcpyDeviceToHost;
+  else kind = hipMemcpyHostToHost;
+  RAFT_CUDA_TRY(hipMemcpyAsync(dst, src, len * sizeof(Type), kind, stream));
+#else
+  RAFT_CUDA_TRY(cudaMemcpyAsync(dst, src, len * sizeof(Type), cudaMemcpyDefault, stream));
+#endif]=])
+            string(REPLACE "${RAFT_COPY_OLD}" "${RAFT_COPY_NEW}" CUDART_UTILS_CONTENT "${CUDART_UTILS_CONTENT}")
+            file(WRITE "${RAFT_CUDART_UTILS_H}" "${CUDART_UTILS_CONTENT}")
+            message(STATUS "✅ Patched RAFT's raft::copy - explicit HIP memcpy direction detection")
+        else()
+            message(STATUS "✅ RAFT's raft::copy already patched for HIP direction detection")
+        endif()
     else()
-        message(WARNING "⚠️ RAFT's cudart_utils.hpp not found at ${RAFT_CUDART_UTILS_H} - cannot patch!")
+        if(_RAFT_INCLUDE_ROOT)
+            message(WARNING "⚠️ RAFT's cudart_utils.hpp not found at ${RAFT_CUDART_UTILS_H} - cannot patch!")
+        endif()
     endif()
     
 else()
@@ -708,11 +820,13 @@ else()
     endif()
     
     find_package(TBB REQUIRED)
-    set(BUILD_TESTING OFF CACHE BOOL "Disable test build for papilo")
+    set(BUILD_TESTING OFF CACHE BOOL "Disable test build for papilo" FORCE)
     set(PAPILO_NO_BINARIES ON)
     option(LUSOL "Disable LUSOL" OFF)
     
     FetchContent_MakeAvailable(papilo)
+    
+    set(BUILD_TESTING ON CACHE BOOL "Re-enable after papilo" FORCE)
     
     # Fetch spdlog (via rapids_logger)
     include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
@@ -751,6 +865,19 @@ if(USE_ROCM)
             set_source_files_properties(${src_file} PROPERTIES LANGUAGE HIP)
         endif()
     endforeach()
+    # These .cpp files are pure host code but include raft/HIP headers, so they
+    # must be compiled with -x hip (for HIP intrinsics).  However PapiLO's
+    # PresolveMethod has a virtual destructor containing std::string, and
+    # Clang 22+ errors on the host-only std::allocator::deallocate call during
+    # device codegen for gfx942.  Since no device kernels live in these TUs,
+    # skip the device compilation pass entirely with --offload-host-only.
+    set(CUOPT_HOST_ONLY_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mip/presolve/gf2_presolve.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mip/presolve/third_party_presolve.cpp
+    )
+    set_source_files_properties(${CUOPT_HOST_ONLY_SOURCES}
+        PROPERTIES COMPILE_OPTIONS "--offload-host-only"
+    )
     message(STATUS "Marked ${CUOPT_SRC_FILES} .cu files as HIP sources")
 endif()
 
@@ -933,13 +1060,13 @@ if(USE_ROCM)
       cuopt::mps_parser
       raft::raft
       rmm::rmm
-      rapids_logger::rapids_logger_logger
+      # 26.03 rapids_logger is a real shared library; link it directly.  The old
+      # generated rapids_logger_logger / *_logger_impl (and rmm_logger_impl)
+      # targets no longer exist — logger.cpp is compiled into librapids_logger.so,
+      # which rmm::rmm also links publicly.
+      rapids_logger::rapids_logger
       PRIVATE
       ${CUOPT_PRIVATE_LIBS}
-      # The _impl targets use INTERFACE_SOURCES to compile logger.cpp into this library.
-      # Without them, rmm::logger and rapids_logger::logger symbols are never defined.
-      rmm::rmm_logger_impl
-      rapids_logger::rapids_logger_logger_impl
     )
     
     # Link spdlog header-only to avoid compiled library/header mismatch with bundled fmt
@@ -1187,11 +1314,23 @@ if(BUILD_MIP_BENCHMARKS AND NOT BUILD_LP_ONLY)
   target_include_directories(solve_MIP
     PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    # The generated cuopt/logger_macros.hpp does #include <spdlog/spdlog.h>, but
+    # spdlog is only a PRIVATE include on ${LIB_TARGET} so it does not propagate
+    # to consumers.  Add it explicitly (mirrors the CLI target).
+    "${CMAKE_CURRENT_BINARY_DIR}/_deps/spdlog-src/include"
   )
 endif()
 
 option(BUILD_LP_BENCHMARKS "Build LP benchmarks" OFF)
 if(BUILD_LP_BENCHMARKS)
+  include(FetchContent)
+  FetchContent_Declare(
+    argparse
+    GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+    GIT_TAG v3.2
+  )
+  FetchContent_MakeAvailable(argparse)
+
   add_executable(solve_LP ../benchmarks/linear_programming/cuopt/run_pdlp.cu)
 
   set_target_properties(solve_LP
@@ -1202,9 +1341,14 @@ if(BUILD_LP_BENCHMARKS)
   )
   
   if(USE_ROCM)
+      set_source_files_properties(
+          ../benchmarks/linear_programming/cuopt/run_pdlp.cu
+          PROPERTIES LANGUAGE HIP
+      )
       set_target_properties(solve_LP PROPERTIES
           HIP_STANDARD 20
           HIP_STANDARD_REQUIRED ON
+          LINKER_LANGUAGE HIP
       )
       target_compile_options(solve_LP
         PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CUOPT_CXX_FLAGS}>"
@@ -1226,11 +1370,19 @@ if(BUILD_LP_BENCHMARKS)
     ${LIB_TARGET}
     OpenMP::OpenMP_CXX
     PRIVATE
+    argparse
   )
   
   if(NOT DEFINED INSTALL_TARGET OR "${INSTALL_TARGET}" STREQUAL "")
     target_link_options(solve_LP PRIVATE -Wl,--enable-new-dtags)
   endif()
+
+  # Same spdlog-header visibility fix as solve_MIP: cuopt/logger_macros.hpp pulls
+  # in <spdlog/spdlog.h>, which is only PRIVATE on ${LIB_TARGET}.
+  target_include_directories(solve_LP
+    PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/_deps/spdlog-src/include"
+  )
 endif()
 
 # ##################################################################################################

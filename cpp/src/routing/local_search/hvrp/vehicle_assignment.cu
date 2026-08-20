@@ -138,13 +138,15 @@ template <typename i_t, typename f_t, request_t REQUEST>
 auto find_best_assignment(solution_t<i_t, f_t, REQUEST>& sol,
                           vehicle_assignment_t<i_t, f_t, REQUEST>& vehicle_assignment)
 {
-  auto constexpr TPB   = 32;
+  auto constexpr TPB   = warp_size;
   auto constexpr shmem = 0;
   bool is_set          = set_shmem_of_kernel(find_best_assignment_kernel<i_t, f_t, REQUEST>, shmem);
   if (!is_set) { return false; }
+  CUOPT_KERNEL_TRACE("find_best_assignment_kernel", "TPB=%d", (int)TPB);
   find_best_assignment_kernel<i_t, f_t, REQUEST>
     <<<1, TPB, shmem, sol.sol_handle->get_stream()>>>(sol.view(), vehicle_assignment.view());
   RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("find_best_assignment_kernel", sol.sol_handle->get_stream());
   return true;
 }
 
@@ -159,10 +161,12 @@ auto update_solution(solution_t<i_t, f_t, REQUEST>& sol,
   auto shmem         = sol.check_routes_can_insert_and_get_sh_size(0);
   bool is_set        = set_shmem_of_kernel(update_solution_kernel<i_t, f_t, REQUEST>, shmem);
   if (!is_set) { return false; }
+  CUOPT_KERNEL_TRACE("update_solution_kernel", "blocks=%d TPB=%d", sol.get_n_routes(), (int)TPB);
   update_solution_kernel<i_t, f_t, REQUEST>
     <<<sol.get_n_routes(), TPB, shmem, sol.sol_handle->get_stream()>>>(
       sol.view(), move_candidates.view(), vehicle_assignment.view());
   RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("update_solution_kernel", sol.sol_handle->get_stream());
 
   sol.compute_cost();
   sol.sol_handle->sync_stream();

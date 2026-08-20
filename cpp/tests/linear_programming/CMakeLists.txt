@@ -65,6 +65,7 @@ if (NOT SKIP_C_PYTHON_ADAPTERS)
     )
 
     if(USE_ROCM)
+        target_compile_definitions(C_API_TEST PRIVATE __HIP_PLATFORM_AMD__)
         target_link_directories(C_API_TEST PRIVATE ${ROCM_PATH}/lib)
     endif()
 

@@ -33,8 +33,13 @@ static void init_handler(const raft::handle_t* handle_ptr)
     handle_ptr->get_cusparse_handle(), HIPSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
 }
 
+// TODO(ROCm): Barrier method requires cuDSS (NVIDIA sparse direct solver),
+// no ROCm equivalent available yet.
 TEST(barrier, chess_set)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "Barrier solver requires cuDSS (not available on ROCm).";
+#endif
   namespace dual_simplex = cuopt::linear_programming::dual_simplex;
   raft::handle_t handle{};
   init_handler(&handle);
@@ -102,8 +107,12 @@ TEST(barrier, chess_set)
   EXPECT_NEAR(solution.x[1], 66.6667, 1e-3);
 }
 
+// TODO(ROCm): Same as above — Barrier + cuDSS required.
 TEST(barrier, dual_variable_greater_than)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "Barrier solver requires cuDSS (not available on ROCm).";
+#endif
   // minimize   3*x0 + 2 * x1
   // subject to  x0 + x1  >= 1
   //             x0 + 2x1 >= 3

@@ -7,6 +7,7 @@
 /* clang-format on */
 
 #include <utilities/cuda_helpers.cuh>
+#include <routing/utilities/constants.hpp>
 #include "compute_ejections.cuh"
 #include "local_search.cuh"
 #include "permutation_helper.cuh"
@@ -78,6 +79,19 @@ __global__ void insert_graph_nodes_kernel(
 
   cuopt_assert(request_id.id() < solution.get_num_orders(),
                "Pickup id should be smaller than n_orders");
+
+  // Skip move path entries that reference the depot or invalid nodes.
+  // The depot (node 0 when depot_included) has route_id=-1 and must not
+  // participate in cycle moves.  All threads in the block read the same
+  // blockIdx.x entry, so they all agree on the early return.
+  bool skip_entry = false;
+  if (request_id.id() < 0 || request_id.id() >= solution.get_num_orders()) { skip_entry = true; }
+  if (ejected_request_id.id() < 0) { skip_entry = true; }
+  if (!skip_entry && ejected_request_id.id() < solution.get_num_orders()) {
+    if (route_node_map.get_route_id(ejected_request_id.id()) < 0) { skip_entry = true; }
+  }
+  if (skip_entry) { return; }
+
   typename route_t<i_t, f_t, REQUEST>::view_t route;
   typename route_t<i_t, f_t, REQUEST>::view_t global_route;
   bool is_pseudo_node = ejected_request_id.id() >= solution.get_num_orders();
@@ -86,6 +100,7 @@ __global__ void insert_graph_nodes_kernel(
     cuopt_assert(ejected_request_id.id() != solution.get_num_orders() + solution.n_routes,
                  "Special node cannot participate in a move");
     auto pseudo_route_id = ejected_request_id.id() - solution.get_num_orders();
+    if (pseudo_route_id < 0 || pseudo_route_id >= solution.n_routes) { return; }
     global_route         = solution.routes[pseudo_route_id];
     route                = route_t<i_t, f_t, REQUEST>::view_t::create_shared_route(
       shmem,
@@ -96,8 +111,8 @@ __global__ void insert_graph_nodes_kernel(
   }
   // ejected node
   else {
-    // we recompute the route_id_per_node after the kernel so there are no race condiitons here
     auto route_id = route_node_map.get_route_id(ejected_request_id.id());
+    if (route_id < 0 || route_id >= solution.n_routes) { return; }
     global_route  = solution.routes[route_id];
     route         = route_t<i_t, f_t, REQUEST>::view_t::create_shared_route(
       shmem, global_route, global_route.get_num_nodes());
@@ -105,12 +120,13 @@ __global__ void insert_graph_nodes_kernel(
     if constexpr (REQUEST == request_t::PDP) {
       ejected_request_id.delivery = order_info.pair_indices[ejected_request_id.id()];
     }
-    // get the temp route that has 1 ejected request in it
     compute_temp_route<i_t, f_t, REQUEST>(
       route, global_route, global_route.get_num_nodes(), solution, ejected_request_id);
   }
-  // read other route id before we change the route_id_per_node
+
   const i_t other_route_id = route_node_map.get_route_id(request_id.id());
+  if (other_route_id < 0 || other_route_id >= solution.n_routes) { return; }
+
   if constexpr (REQUEST == request_t::PDP) {
     request_id.delivery = order_info.pair_indices[request_id.id()];
   }
@@ -132,11 +148,9 @@ __global__ void insert_graph_nodes_kernel(
     "Node count is not properly increased");
   global_route.copy_from(route);
   __syncthreads();
-  // check if the cycle closes on the route of the ejected nodes
-  // if the cycle does not close, copy the ejected(from which the interted requests are ejected)
-  // temp route to actual route
 
-  if (!path.loop_closed[other_route_id]) {
+  if (other_route_id >= 0 && other_route_id < solution.n_routes &&
+      !path.loop_closed[other_route_id]) {
     auto& other_route        = solution.routes[other_route_id];
     auto sh_other_temp_route = route_t<i_t, f_t, REQUEST>::view_t::create_shared_route(
       shmem, other_route, other_route.get_num_nodes());
@@ -296,21 +310,20 @@ __global__ void populate_cross_list_kernel(
       first_cand, second_cand, first_node, second_node);
 
     if (cross_cand.cost_counter.cost < best_values_per_route[second_route].cost_counter.cost) {
-      acquire_lock_block(&locks_per_route[second_route]);
-      if (cross_cand.cost_counter.cost < best_values_per_route[second_route].cost_counter.cost) {
-        best_values_per_route[second_route] = cross_cand;
-      }
-      release_lock_block(&locks_per_route[second_route]);
+      with_lock_block(&locks_per_route[second_route], [&]() {
+        if (cross_cand.cost_counter.cost < best_values_per_route[second_route].cost_counter.cost) {
+          best_values_per_route[second_route] = cross_cand;
+        }
+      });
     }
   }
   __syncthreads();
   for (i_t second_route = threadIdx.x; second_route < sol.n_routes; second_route += blockDim.x) {
     const i_t route_pair_idx  = first_route * sol.n_routes + second_route;
     const auto best_per_route = best_values_per_route[second_route];
-    // acquire the critical section for this route pair
-    acquire_lock(&scross_cands.route_pair_locks[route_pair_idx]);
-    scross_cands.insert_best_scross_candidate(route_pair_idx, best_per_route);
-    release_lock(&scross_cands.route_pair_locks[route_pair_idx]);
+    with_lock(&scross_cands.route_pair_locks[route_pair_idx], [&]() {
+      scross_cands.insert_best_scross_candidate(route_pair_idx, best_per_route);
+    });
   }
 }
 
@@ -419,18 +432,24 @@ bool local_search_t<i_t, f_t, REQUEST>::populate_cross_moves(
   if (!set_shmem_of_kernel(populate_cross_list_kernel<i_t, f_t, REQUEST>, sh_size)) {
     return false;
   }
+  CUOPT_KERNEL_TRACE("populate_cross_list_kernel", "blocks=%d TPB=%d", solution.get_num_orders() - 1, TPB);
   populate_cross_list_kernel<i_t, f_t, REQUEST>
     <<<solution.get_num_orders() - 1, TPB, sh_size, solution.sol_handle->get_stream()>>>(
       solution.view(), move_candidates.view());
+  RAFT_CHECK_CUDA(solution.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("populate_cross_list_kernel", solution.sol_handle->get_stream());
 
   sh_size = sizeof(i_t) * (solution.n_routes + 1) * solution.n_routes;
 
   if (!set_shmem_of_kernel(populate_cross_moves_kernel<i_t, f_t, REQUEST>, sh_size)) {
     return false;
   }
+  CUOPT_KERNEL_TRACE("populate_cross_moves_kernel", "blocks=1 TPB=%d", TPB);
   populate_cross_moves_kernel<i_t, f_t, REQUEST>
     <<<1, TPB, sh_size, solution.sol_handle->get_stream()>>>(solution.view(),
                                                              move_candidates.view());
+  RAFT_CHECK_CUDA(solution.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("populate_cross_moves_kernel", solution.sol_handle->get_stream());
   solution.sol_handle->sync_stream();
   return true;
 }
@@ -443,8 +462,8 @@ void local_search_t<i_t, f_t, REQUEST>::populate_move_path(
   auto n_cycles = move_candidates.cycles.n_cycles_.value(solution.sol_handle->get_stream());
   if (n_cycles) {
     populate_move_path_kernel<i_t, f_t, REQUEST>
-      <<<n_cycles, 32, 0, solution.sol_handle->get_stream()>>>(solution.view(),
-                                                               move_candidates.view());
+      <<<n_cycles, warp_size, 0, solution.sol_handle->get_stream()>>>(solution.view(),
+                                                                      move_candidates.view());
   }
   populate_intra_candidates<i_t, f_t, REQUEST>
     <<<1, 128, 0, solution.sol_handle->get_stream()>>>(solution.view(), move_candidates.view());
@@ -457,15 +476,18 @@ void local_search_t<i_t, f_t, REQUEST>::perform_moves(solution_t<i_t, f_t, REQUE
   raft::common::nvtx::range fun_scope("perform_moves");
   solution.global_runtime_checks(false, false, "perform_moves_start");
   auto stream        = solution.sol_handle->get_stream();
-  constexpr i_t TPB  = 32;
+  constexpr i_t TPB  = warp_size;
   const i_t n_blocks = move_candidates.move_path.n_insertions.value(stream);
   size_t shared_size = solution.check_routes_can_insert_and_get_sh_size(
     n_insertions_per_move * request_info_t<i_t, REQUEST>::size());
   bool is_set = set_shmem_of_kernel(insert_graph_nodes_kernel<i_t, f_t, REQUEST>, shared_size);
   cuopt_assert(is_set, "Not enough shared memory on device for performing the local search move!");
   cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
+  CUOPT_KERNEL_TRACE("insert_graph_nodes_kernel", "blocks=%d TPB=%d", n_blocks, TPB);
   insert_graph_nodes_kernel<i_t, f_t, REQUEST>
     <<<n_blocks, TPB, shared_size, stream>>>(solution.view(), move_candidates.view());
+  RAFT_CHECK_CUDA(stream);
+  CUOPT_KERNEL_SYNC_CHECK("insert_graph_nodes_kernel", stream);
   solution.compute_route_id_per_node();
   solution.compute_cost();
   solution.global_runtime_checks(false, false, "perform_moves_end");

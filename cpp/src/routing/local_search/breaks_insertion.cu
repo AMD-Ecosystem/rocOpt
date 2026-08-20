@@ -123,17 +123,23 @@ __global__ void find_break_insertions_kernel(
     block_reduce_ranked(temp_cost, t_id, reduction_buf, &reduction_idx);
 
     if (threadIdx.x == reduction_idx) {
-      acquire_lock(&locks_per_route[sh_route.get_id()]);
+      while (!acquire_lock(&locks_per_route[sh_route.get_id()])) {
+#if defined(__HIP_PLATFORM_AMD__)
+        __builtin_amdgcn_s_sleep(8);
+#endif
+      }
       if (reduction_buf[0] < best_cand_per_route[sh_route.get_id()].cost) {
         best_cand_per_route[sh_route.get_id()] = thread_best_cand;
       }
       release_lock(&locks_per_route[sh_route.get_id()]);
     }
   } else {
-    // if you are only ejecting but not inserting
-    // note:: this should never happen with the current state of the code
     if (threadIdx.x == 0) {
-      acquire_lock(&locks_per_route[sh_route.get_id()]);
+      while (!acquire_lock(&locks_per_route[sh_route.get_id()])) {
+#if defined(__HIP_PLATFORM_AMD__)
+        __builtin_amdgcn_s_sleep(8);
+#endif
+      }
       double cost_difference =
         sh_route.get_cost(true, weights) - global_route.get_cost(true, weights);
       if (cost_difference < best_cand_per_route[sh_route.get_id()].cost) {

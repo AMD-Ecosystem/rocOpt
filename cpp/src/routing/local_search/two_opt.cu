@@ -158,7 +158,11 @@ __global__ void find_two_opt_moves(typename solution_t<i_t, f_t, REQUEST>::view_
     if (shbuf[0] != std::numeric_limits<double>::max() && shbuf[0] < -EPSILON &&
         reduction_index == threadIdx.x) {
       if (two_opt_cand.selection_delta < best_candidates[route_id].selection_delta) {
-        acquire_lock(&locks[route_id]);
+        while (!acquire_lock(&locks[route_id])) {
+#if defined(__HIP_PLATFORM_AMD__)
+          __builtin_amdgcn_s_sleep(8);
+#endif
+        }
         if (two_opt_cand.selection_delta < best_candidates[route_id].selection_delta) {
           best_candidates[route_id] = two_opt_cand;
         }
@@ -393,6 +397,7 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_two_opt(
 
   if (!set_shmem_of_kernel(find_two_opt_moves<i_t, f_t, REQUEST>, sh_size)) { return false; }
 
+  CUOPT_KERNEL_TRACE("find_two_opt_moves", "blocks=%d TPB=%d", n_blocks, n_threads);
   find_two_opt_moves<i_t, f_t, REQUEST>
     <<<n_blocks, n_threads, sh_size, sol.sol_handle->get_stream()>>>(
       sol.view(),
@@ -401,6 +406,7 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_two_opt(
       cuopt::make_span(sampled_nodes_data_),
       cuopt::make_span(locks_));
   RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("find_two_opt_moves", sol.sol_handle->get_stream());
 
   n_moves_found = thrust::count_if(sol.sol_handle->get_thrust_policy(),
                                    sampled_nodes_data_.begin(),
@@ -434,6 +440,7 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_two_opt(
     moved_regions_.resize(sol.get_n_routes() * sol.get_max_active_nodes_for_all_routes(),
                           sol.sol_handle->get_stream());
     async_fill(moved_regions_, 0, sol.sol_handle->get_stream());
+    CUOPT_KERNEL_TRACE("execute_recycle", "blocks=%d TPB=%d", sol.get_n_routes(), n_threads);
     execute_recycle<i_t, f_t, REQUEST, n_threads>
       <<<sol.get_n_routes(), n_threads, sh_size, sol.sol_handle->get_stream()>>>(
         sol.view(),
@@ -442,6 +449,7 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_two_opt(
         cuopt::make_span(moved_regions_));
   } else {
     if (!set_shmem_of_kernel(execute_two_opt_moves<i_t, f_t, REQUEST>, sh_size)) { return false; }
+    CUOPT_KERNEL_TRACE("execute_two_opt_moves", "blocks=%d TPB=%d", sol.get_n_routes(), n_threads);
     execute_two_opt_moves<i_t, f_t, REQUEST>
       <<<sol.get_n_routes(), n_threads, sh_size, sol.sol_handle->get_stream()>>>(
         sol.view(),
@@ -450,6 +458,7 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_two_opt(
         cuopt::make_span(moved_regions_));
   }
   RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("execute_two_opt/recycle", sol.sol_handle->get_stream());
 
   cuopt_func_call(sol.compute_cost());
   cuopt_func_call(cost_after =

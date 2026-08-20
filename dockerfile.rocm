@@ -2,10 +2,32 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# ROCm-based Docker image with Miniforge3
-# Base image: ROCm development environment on Ubuntu 24.04
+# Multi-stage ROCm Docker image for rocOpt.
+#
+# Stage 1 (builder):  ROCm 7.1.1 amdclang++ compiles libmps_parser, libcuopt
+#   and the Python packages.  ROCm 7.2.x's compiler has an AMDGPU code-
+#   generation regression that produces non-deterministic GPU memory faults
+#   on MI300X (gfx942); building with 7.1.1 avoids it.
+#   (ROCM-21706; prior art AIOSS-4496.)
+# Stage 2 (runtime):  ROCm 7.2.3 runtime.  The 7.1.1-compiled binaries are
+#   code-object forward-compatible with the 7.2.3 HSA runtime / KFD driver /
+#   userspace libs.  No compiler or build-time credentials land in this stage.
+#
+# Build (expects GH_USERNAME and GH_TOKEN in the environment):
+#   docker build -f dockerfile.rocm \
+#       --build-arg GH_USERNAME=$GH_USERNAME \
+#       --build-arg GH_TOKEN=$GH_TOKEN \
+#       --build-arg ROCM_BUILD_VERSION=7.1.1 \
+#       --build-arg ROCM_RUNTIME_VERSION=7.2.3 \
+#       -t rocopt:25.10-rocm7.2.3 .
 
-FROM rocm/dev-ubuntu-24.04:7.1.1-complete
+ARG ROCM_BUILD_VERSION=7.1.1
+ARG ROCM_RUNTIME_VERSION=7.2.3
+
+###############################################################################
+# STAGE 1 — BUILD (ROCm 7.1.1 compiler toolchain)
+###############################################################################
+FROM rocm/dev-ubuntu-24.04:${ROCM_BUILD_VERSION}-complete AS builder
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -26,17 +48,29 @@ ENV CC=/opt/rocm/bin/amdclang
 ENV CXX=/opt/rocm/bin/amdclang++
 ENV CMAKE_HIP_COMPILER_ROCM_ROOT=/opt/rocm
 
-# Add both possible ROCm locations to CMAKE_PREFIX_PATH
-ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake:/opt/rocm-7.1.1:/opt/rocm-7.1.1/lib/cmake:${CMAKE_PREFIX_PATH}
+# Add ROCm locations to CMAKE_PREFIX_PATH (use /opt/rocm symlink for portability)
+ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake:${CMAKE_PREFIX_PATH}
 
 # Update PATH and library paths for ROCm
-ENV PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:/opt/rocm-7.1.1/bin:/opt/rocm-7.1.1/llvm/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:/opt/rocm-7.1.1/lib:/opt/rocm-7.1.1/lib64:${LD_LIBRARY_PATH}
+# Include /opt/rocm/llvm/lib for libomp.so (LLVM OpenMP runtime needed by Cython extensions)
+# Include cuopt build directories so libcuopt.so and libmps_parser.so are findable at runtime
+ENV PATH=/rocopt-release/cpp/build:/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/rocopt-release/cpp/build:/rocopt-release/cpp/libmps_parser/build:/opt/rocm/lib:/opt/rocm/lib64:${LD_LIBRARY_PATH}
+
+# ROCm runtime tuning for MI300 (gfx942) stability
+ENV HSA_ENABLE_SDMA=0
+ENV GPU_MAX_HW_QUEUES=8
+
+# CuPy ROCm build configuration
+ENV CUPY_INSTALL_USE_HIP=1
+ENV ROCM_HOME=/opt/rocm
 
 # Update system and install dependencies
 # Note: Using -complete base image which includes all ROCm dev libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    wget \
+    unzip \
     ca-certificates \
     bzip2 \
     git \
@@ -68,24 +102,447 @@ ENV DEBIAN_FRONTEND=""
 # Set default shell to bash
 SHELL ["/bin/bash", "-c"]
 
-# Set working directory
-WORKDIR /workspace
+# Clone the rocopt repository (replaces the prior bind-mount workflow).
+# Repo:   https://github.com/AMD-AIOSS/rocopt.git
+# Branch: awelling/use-open-source-rocm-ds  (i.e. origin/<branch> on the remote;
+#         `git clone --branch <name>` resolves <name> against the remote being
+#         cloned, and after the clone it becomes refs/remotes/origin/<name>
+#         inside the image.)
+#
+# The repository is currently PRIVATE.  Pass credentials at build time:
+#
+#   export GH_USERNAME=your-github-username
+#   export GH_TOKEN=ghp_yourPersonalAccessToken
+#
+#   docker build -f dockerfile.rocm \
+#       --build-arg GH_USERNAME \
+#       --build-arg GH_TOKEN \
+#       -t rocopt:rocm7.1 .
+#
+# When the repo becomes public, the --build-arg flags can be omitted and
+# the clone falls back to anonymous HTTPS.
+#
+# NOTE: build args are visible in `docker history`, so do NOT push the
+# resulting image to a public registry without re-building cleanly first.
+ARG ROCOPT_REPO_HOST=github.com/AMD-AIOSS/rocopt.git
+ARG ROCOPT_BRANCH=awelling/use-open-source-rocm-ds
+ARG GH_USERNAME=""
+ARG GH_TOKEN=""
+# Cache-bust for the clone layer.  `git clone --branch <name>` always fetches
+# the current branch tip, but the RUN command string never changes when the
+# branch moves, so Docker would happily reuse a stale cached checkout (and every
+# downstream layer built from it).  build-image.sh resolves the remote tip via
+# `git ls-remote` and passes it here; when the branch head changes this ARG
+# changes, invalidating the clone (and everything after).  Defaults to `unknown`
+# for manual `docker build` invocations that don't set it.
+ARG ROCOPT_SOURCE_SHA=unknown
+RUN set -eu && \
+    echo "Building rocopt source @ ${ROCOPT_BRANCH} (expected tip: ${ROCOPT_SOURCE_SHA})" && \
+    if [ -n "${GH_USERNAME}" ] && [ -n "${GH_TOKEN}" ]; then \
+        echo "Cloning ${ROCOPT_REPO_HOST}@${ROCOPT_BRANCH} as ${GH_USERNAME}"; \
+        git clone --depth 1 --branch "${ROCOPT_BRANCH}" \
+            "https://${GH_USERNAME}:${GH_TOKEN}@${ROCOPT_REPO_HOST}" /rocopt-release; \
+    else \
+        echo "GH_USERNAME and/or GH_TOKEN not provided - attempting anonymous clone..."; \
+        git clone --depth 1 --branch "${ROCOPT_BRANCH}" \
+            "https://${ROCOPT_REPO_HOST}" /rocopt-release; \
+    fi && \
+    git -C /rocopt-release remote set-url origin "https://${ROCOPT_REPO_HOST}" && \
+    echo "Resolved origin/${ROCOPT_BRANCH} -> $(git -C /rocopt-release rev-parse HEAD)" && \
+    HEAD_SHA=$(git -C /rocopt-release rev-parse HEAD) && \
+    ORIGIN_SHA=$(git -C /rocopt-release rev-parse "refs/remotes/origin/${ROCOPT_BRANCH}") && \
+    [ "${HEAD_SHA}" = "${ORIGIN_SHA}" ] || \
+        { echo "ERROR: HEAD (${HEAD_SHA}) != origin/${ROCOPT_BRANCH} (${ORIGIN_SHA})"; exit 1; } && \
+    if [ "${ROCOPT_SOURCE_SHA}" != "unknown" ] && [ "${HEAD_SHA}" != "${ROCOPT_SOURCE_SHA}" ]; then \
+        echo "ERROR: cloned HEAD (${HEAD_SHA}) != expected ROCOPT_SOURCE_SHA (${ROCOPT_SOURCE_SHA})"; exit 1; \
+    fi
 
-# Copy conda environment file and requirements
-COPY conda/environments/all_rocm7.yaml /workspace/conda/environments/all_rocm7.yaml
-COPY requirements.txt /workspace/requirements.txt
+# Set working directory to the cloned repository
+WORKDIR /rocopt-release
 
-# Create conda environment from yaml file
+# Create conda environment from yaml file (sourced from the cloned repo).
+#
+# The pinned ROCm-DS wheels below (amd_pylibraft, amd_hipmm, amd_hipdf, ...)
+# are cp313-only. all_rocm7.yaml's `python>=3.10,<3.14` constraint lets the
+# conda solver pick any 3.10-3.13, and in practice it has been picking 3.12,
+# which then makes `pip install amd_pylibraft-1.0.0-cp313-cp313-...whl`
+# fail with "not a supported wheel on this platform". Pin Python to 3.13
+# at env-create time so the env always matches the cp313 wheels.
+# Override at build time with `--build-arg ROCOPT_PYTHON_VERSION=3.12` only
+# if you've also supplied matching cp312 AMD_*_WHEEL_URL overrides.
+ARG ROCOPT_PYTHON_VERSION=3.13
+# conda.anaconda.org rate-limits (HTTP 429) bursty package/metadata fetches,
+# especially from shared cluster IPs.  Serialize downloads (fetch_threads=1),
+# enable conda's own retry/backoff, and wrap `conda env create` in a retry
+# loop with exponential backoff so a transient 429 doesn't abort the build.
 RUN source ${CONDA_DIR}/bin/activate && \
-    conda env create --name cuopt_dev --file conda/environments/all_rocm7.yaml && \
+    conda config --set remote_max_retries 8 && \
+    conda config --set remote_backoff_factor 3 && \
+    conda config --set fetch_threads 1 && \
+    ENV_YAML=$(mktemp --suffix=.yaml) && \
+    sed -E "s|^- python>=3\.10,<3\.14|- python=${ROCOPT_PYTHON_VERSION}|" \
+        /rocopt-release/conda/environments/all_rocm7.yaml > "${ENV_YAML}" && \
+    for attempt in 1 2 3 4 5; do \
+        echo "[rocopt] conda env create attempt ${attempt}/5"; \
+        conda env create --name cuopt_dev --file "${ENV_YAML}" && break; \
+        rc=$?; \
+        [ "${attempt}" -eq 5 ] && \
+            { echo "ERROR: conda env create failed after 5 attempts (rc=${rc})"; exit 1; }; \
+        echo "[rocopt] env create failed (rc=${rc}); removing partial env and backing off ${attempt}x30s..."; \
+        conda env remove --name cuopt_dev --yes >/dev/null 2>&1 || true; \
+        sleep $(( attempt * 30 )); \
+    done && \
+    rm -f "${ENV_YAML}" && \
+    python_ver=$(${CONDA_DIR}/envs/cuopt_dev/bin/python -c 'import sys; print("%d.%d"%sys.version_info[:2])') && \
+    echo "[rocopt] cuopt_dev env python = ${python_ver}" && \
+    [ "${python_ver}" = "${ROCOPT_PYTHON_VERSION}" ] || \
+        { echo "ERROR: conda solved to python ${python_ver}, expected ${ROCOPT_PYTHON_VERSION}"; exit 1; } && \
     conda clean -afy
 
 # Activate conda environment and install pip requirements
 RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
-    pip install -r requirements.txt
+    pip install -r /rocopt-release/requirements.txt
 
 # Set conda environment to activate by default
 RUN echo "source ${CONDA_DIR}/bin/activate cuopt_dev" >> ~/.bashrc
+
+# Install ROCm-DS Python packages for the cuopt Python build.
+#
+# Each package can come from either:
+#   (a) an explicit wheel URL on the AMD-AIOSS Nexus
+#       (https://artifacts.aifoundry.amd.com), pinned to a specific
+#       release-rocmds-26.03 post-merge-checkpoint repo — preferred for the
+#       26.03 line; pins exact artifact bytes and the Nexus repos are the
+#       canonical publisher for the 26.03 release.
+#   (b) the AMD-hosted PyPI index (fallback when an URL is not provided).
+#
+# Pass --build-arg AMD_<PKG>_WHEEL_URL=<nexus-url> to use option (a).
+# Leave the arg empty to fall back to option (b).
+#
+# pylibraft     → Cython .pxd files (pylibraft/common/handle.pxd)
+# libraft       → raft C++ runtime (runtime dep of amd-pylibraft 1.x)
+# hip-python    → HIP Python bindings (runtime dep of amd-pylibraft 1.x)
+# hip-python-as-cuda → CUDA-compat shim over hip-python; only on AMD Nexus
+#                 (not published to public PyPI), so we must pin its wheel
+# amd-rocmds-logger → ROCm-DS logger runtime (runtime dep of amd-libhipmm 4.x);
+#                 only on AMD Nexus, plain linux_x86_64 platform tag
+# amd-cupy      → ROCm/HIP build of CuPy (runtime dep of amd-hipdf 3.x); the
+#                 stand-alone install step later in this Dockerfile pins the
+#                 same wheel — having it here lets pip's resolver satisfy
+#                 amd-hipdf's `amd-cupy==13.*,>=13.0.0a0` requirement during
+#                 the wheel install below instead of falling through to the
+#                 public PyPI stub (0.0.2)
+# numba-hip     → AMD's ROCm/HIP backend for numba (runtime dep of amd-hipdf
+#                 3.x).  Universal py3-none-any wheel, only on AMD Nexus.
+# hipmm         → rmm Cython .pxd files (rmm/pylibrmm/device_buffer.pxd)
+# libhipmm      → C++ headers + libhipcxx headers under <prefix>/include/rapids/
+# hipdf         → cudf module
+# pylibhipdf    → pylibcudf
+# libhipdf      → hipDF C++ runtime (loaded via cudf/pylibcudf)
+# ROCm-DS Python packages now ship on the open AMD PyPI index
+# (https://pypi.amd.com/rocm-7.2.3/simple) at the exact versions pinned in the
+# install loop below, so these wheel-URL overrides default to empty and the
+# packages are pulled from the open index.  Set any AMD_<PKG>_WHEEL_URL at build
+# time (e.g. to a Nexus artifact) to override an individual package.
+ARG AMD_PYLIBRAFT_WHEEL_URL=
+ARG AMD_LIBRAFT_WHEEL_URL=
+ARG HIP_PYTHON_WHEEL_URL=
+ARG HIP_PYTHON_AS_CUDA_WHEEL_URL=
+ARG AMD_ROCMDS_LOGGER_WHEEL_URL=
+# amd-cupy is NOT published for cp313 on the open index, so it stays pinned to
+# the AMD Nexus wheel.  Declared here (same URL as the dedicated cupy install
+# step below) so the pip resolver can satisfy amd-hipdf's amd-cupy==13.* dep.
+ARG AMD_CUPY_WHEEL_URL=https://artifacts.aifoundry.amd.com/repository/release-rocmds-26.03-post-merge-checkpoint-cupy-rocm-manylinux2.28-python3.13-10-pypi/packages/amd-cupy/13.5.1/amd_cupy-13.5.1-cp313-cp313-manylinux_2_28_x86_64.whl
+ARG NUMBA_HIP_WHEEL_URL=
+ARG AMD_HIPMM_WHEEL_URL=
+ARG AMD_LIBHIPMM_WHEEL_URL=
+ARG AMD_HIPDF_WHEEL_URL=
+ARG AMD_PYLIBHIPDF_WHEEL_URL=
+ARG AMD_LIBHIPDF_WHEEL_URL=
+ARG AMD_PYPI_INDEX_URL=https://pypi.amd.com/rocm-7.2.3/simple
+RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    WHEEL_URLS="" && \
+    PYPI_PKGS="" && \
+    for spec in \
+        "HIP_PYTHON_WHEEL_URL:hip-python==7.*" \
+        "HIP_PYTHON_AS_CUDA_WHEEL_URL:hip-python-as-cuda==7.*" \
+        "AMD_PYLIBRAFT_WHEEL_URL:amd-pylibraft==1.0.0" \
+        "AMD_LIBRAFT_WHEEL_URL:amd-libraft==1.0.0" \
+        "AMD_ROCMDS_LOGGER_WHEEL_URL:amd-rocmds-logger==1.0.0" \
+        "AMD_CUPY_WHEEL_URL:amd-cupy==13.5.1" \
+        "NUMBA_HIP_WHEEL_URL:numba-hip==0.1.6" \
+        "AMD_HIPMM_WHEEL_URL:amd-hipmm==4.0.0" \
+        "AMD_LIBHIPMM_WHEEL_URL:amd-libhipmm==4.0.0" \
+        "AMD_HIPDF_WHEEL_URL:amd-hipdf==3.0.0" \
+        "AMD_PYLIBHIPDF_WHEEL_URL:amd-pylibhipdf==3.0.0" \
+        "AMD_LIBHIPDF_WHEEL_URL:amd-libhipdf==3.0.0" \
+    ; do \
+        var="${spec%%:*}"; pypi_spec="${spec#*:}"; url=$(eval "echo \$$var"); \
+        if [ -n "${url}" ]; then \
+            echo "[rocopt] ${var} -> wheel ${url}"; \
+            WHEEL_URLS="${WHEEL_URLS} ${url}"; \
+        else \
+            echo "[rocopt] ${var} unset; falling back to AMD PyPI for ${pypi_spec}"; \
+            PYPI_PKGS="${PYPI_PKGS} ${pypi_spec}"; \
+        fi; \
+    done && \
+    if [ -n "${WHEEL_URLS}" ]; then \
+        pip install --no-cache-dir \
+            --trusted-host artifacts.aifoundry.amd.com \
+            ${WHEEL_URLS}; \
+    fi && \
+    if [ -n "${PYPI_PKGS}" ]; then \
+        pip install ${PYPI_PKGS} --extra-index-url="${AMD_PYPI_INDEX_URL}"; \
+    fi
+
+# numba-hip ships with hardcoded Clang version expectations (e.g. Clang 20 for
+# ROCm 7.0.x builds).  Create compatibility symlinks so the import succeeds
+# regardless of which Clang version is actually installed.
+RUN ACTUAL=$(ls -d /opt/rocm/llvm/lib/clang/[0-9]* 2>/dev/null | head -1) && \
+    if [ -n "${ACTUAL}" ]; then \
+        for v in 18 19 20 21 22 23; do \
+            [ -e "/opt/rocm/llvm/lib/clang/${v}" ] || \
+                ln -sf "${ACTUAL}" "/opt/rocm/llvm/lib/clang/${v}" 2>/dev/null || true; \
+        done; \
+    fi
+
+# numba-hip's vendored `rocm.clang.cindex` (in `rocm-llvm-python`) registers
+# libclang C-API symbols at load time that no single libclang.so currently
+# provides:
+#   * `clang_getFullyQualifiedName` is an AMD downstream extension, present
+#     only in newer ROCm-bundled libclang builds (ROCm 7.1.1's libclang
+#     predates it).
+#   * `clang_getOffsetOfBase` is a recent upstream LLVM symbol (~LLVM 21+),
+#     absent from Ubuntu 24.04's libclang-19/20.
+# No combination of system or apt.llvm.org libclang has both.  Disabling the
+# strict registration check turns missing symbols into lazy AttributeErrors;
+# `numba.hip`'s HIP header parsing only uses the basic libclang API
+# (createIndex, parseTranslationUnit, getCursorSpelling, ...) so the missing
+# symbols are never actually called at runtime.
+#
+# Verified at d55924a + ROCm 7.1.1: `import cudf` and `import cuopt` both
+# succeed against /opt/rocm/llvm/lib/libclang.so with this bypass in place,
+# and the full pytest suite (110 tests) collects and runs successfully.
+RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    SP=$(python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") && \
+    printf '%s\n' \
+        '"""Auto-loaded by Python at startup.' \
+        '' \
+        'Workaround for the libclang ABI mismatch between numba-hip and ROCm 7.1.x.' \
+        'See the Dockerfile comment block that emits this file for the rationale.' \
+        '"""' \
+        'try:' \
+        '    from rocm.clang import cindex as _ci' \
+        '    _ci.Config.compatibility_check = False' \
+        '    _ci.Config.set_library_file("/opt/rocm/llvm/lib/libclang.so")' \
+        'except Exception:' \
+        '    pass' \
+        > "${SP}/sitecustomize.py" && \
+    python -c "import cudf; print('libclang bypass verified for cudf import')"
+
+# Install pyarrow (required by compiled Cython extensions at import time)
+RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    pip install --no-cache-dir pyarrow
+
+# Install CuPy with ROCm/HIP support.
+#
+# Primary source: a pinned wheel from the AMD-AIOSS Nexus
+# (release-rocmds-26.03 post-merge-checkpoint cupy repo). Override via:
+#     --build-arg AMD_CUPY_WHEEL_URL=<other-url>
+# or leave empty to fall back to the AMD public PyPI index, then to a CuPy
+# source build.
+#
+# IMPORTANT: the default wheel is cp313-cp313 (Python 3.13 only) and is hosted
+# on the AMD-internal Nexus (artifacts.aifoundry.amd.com).  The build host must
+# have:
+#   (a) routing to that Nexus instance, AND
+#   (b) a conda env using Python 3.13 — the conda solver should pick 3.13 from
+#       all_rocm7.yaml's "python>=3.10,<3.14" constraint, but verify with
+#       `python --version` inside the image if installation fails.
+#
+# CONDA_BUILD_CROSS_COMPILATION=0 avoids a ValueError in CuPy's build script
+# when the env var is set to an empty string by conda.
+#
+# NOTE: amd-cupy is also pinned in the wheel-install loop above (so that pip's
+# resolver can satisfy amd-hipdf's amd-cupy==13.* dep at that point).  This
+# block is kept because it preserves the three-tier fallback chain:
+#   Nexus wheel URL  →  AMD public PyPI  →  source build.
+# In the common path it is a no-op (pip reports "Requirement already satisfied").
+RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    ( [ -n "${AMD_CUPY_WHEEL_URL}" ] && pip install --no-cache-dir \
+        --trusted-host artifacts.aifoundry.amd.com \
+        "${AMD_CUPY_WHEEL_URL}" ) \
+    || pip install --no-cache-dir amd-cupy --extra-index-url=https://pypi.amd.com/simple \
+    || ( CONDA_BUILD_CROSS_COMPILATION=0 pip install --no-cache-dir cupy )
+
+# -----------------------------------------------------------------------------
+# Build rocopt (libmps_parser, libcuopt, and all Python packages).
+# -----------------------------------------------------------------------------
+# Notes:
+#   * No GPU is visible during `docker build`, so build.sh's runtime
+#     `rocminfo` probe falls back to gfx90a when no GPU is visible during
+#     `docker build`.  scripts/detect_rocopt_gpu_arch.sh detects from rocminfo
+#     when a GPU is present; override with `--build-arg ROCOPT_GPU_ARCH=gfx9xx`.
+#   * The C++ build's CMakeLists.txt uses FetchContent to clone the
+#     open-source ROCm-DS/ROCmDS-CMake repo (release/rocmds-26.03 branch),
+#     and the nested rmm/raft/hipCollections/rapids_logger fetches all resolve
+#     against the public ROCm-DS / ROCm orgs.  No GitHub credentials are needed
+#     for these clones.
+#   * Targets are listed explicitly to skip the `docs` target, which
+#     requires Doxygen + an internet `linkcheck` pass we don't want
+#     during image builds.
+#   * `--skip-tests-build` is intentionally omitted so libcuopt's CMake
+#     configure runs with `-DBUILD_TESTS=1`.  build.sh then builds the
+#     default `all` target (compiling the gtest executables, whose install
+#     rules are EXCLUDE_FROM_ALL) and installs the `testing` component to
+#     <prefix>/bin/gtests/libcuopt, so the gtests are present in the image
+#     and `ctest --test-dir cpp/build` works.  (build.sh has no separate
+#     `tests` target — tests build as part of `libcuopt`.)
+# ROCOPT_GPU_ARCH is optional; when unset, detect from rocminfo at build time.
+# Override with `--build-arg ROCOPT_GPU_ARCH=gfx9xx` for a single-arch image.
+ARG ROCOPT_GPU_ARCH=
+# Optional LP/MIP benchmark binaries (cpp/build/solve_LP, solve_MIP).  This is a
+# generic passthrough with no hardcoded policy: the value (none|lp|mip|all) is
+# supplied by scripts/build-image.sh's --benchmarks option and translated into
+# the corresponding build.sh flags below.  Default `none` preserves the prior
+# behaviour (no benchmark binaries in the image).
+ARG ROCOPT_BENCHMARKS=none
+RUN set -eu && \
+    source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    [ -n "${ROCOPT_GPU_ARCH:-}" ] && export ROCOPT_GPU_ARCH && \
+    source /rocopt-release/scripts/detect_rocopt_gpu_arch.sh 2>/dev/null || true && \
+    export PARALLEL_LEVEL=$(nproc) && \
+    # Resolve all nested ROCm-DS clones (ROCmDS-CMake, hipMM, hipRaft,
+    # ROCmDS-Logger, ...) against the public ROCm-DS org.  The rmm/raft
+    # cmake modules and rapids-cmake/cpm/versions.json use this to build the
+    # clone URLs, all of which are public on release/rocmds-26.03.
+    export RAPIDS_CMAKE_ROCM_DS_ORG=ROCm-DS && \
+    cd /rocopt-release && \
+    # Translate the ROCOPT_BENCHMARKS passthrough into build.sh CMake options.
+    # We deliberately DO NOT use build.sh's `-b`: `-b` sets DEFINE_BENCHMARK,
+    # which does `add_definitions(-DBENCHMARK)` GLOBALLY and recompiles the
+    # whole library with its `#ifdef BENCHMARK` code paths (which currently
+    # fail to compile on ROCm, e.g. routing/local_search/vrp/vrp_search.cu).
+    # BUILD_LP_BENCHMARKS / BUILD_MIP_BENCHMARKS are independent options that
+    # build solve_LP / solve_MIP without touching library compilation, so the
+    # library builds exactly as in a plain (none) image.  Passed as a single
+    # --cmake-args="..." (build.sh forbids more than one) via a quoted array so
+    # the literal quotes and the internal space in the `all` case survive.
+    BENCH_ARGS=() && \
+    case "${ROCOPT_BENCHMARKS}" in \
+        none|"") : ;; \
+        lp)      BENCH_ARGS=('--cmake-args="-DBUILD_LP_BENCHMARKS=ON"') ;; \
+        mip)     BENCH_ARGS=('--cmake-args="-DBUILD_MIP_BENCHMARKS=ON"') ;; \
+        all)     BENCH_ARGS=('--cmake-args="-DBUILD_LP_BENCHMARKS=ON -DBUILD_MIP_BENCHMARKS=ON"') ;; \
+        *) echo "ERROR: invalid ROCOPT_BENCHMARKS='${ROCOPT_BENCHMARKS}' (expected: none|lp|mip|all)" >&2; exit 3 ;; \
+    esac && \
+    ( ./build.sh --use-rocm "${BENCH_ARGS[@]}" \
+        libmps_parser libcuopt cuopt cuopt_mps_parser cuopt_server cuopt_sh_client; \
+      rc=$?; \
+      rm -rf /tmp/rocopt-build-shims; \
+      exit $rc )
+
+# Normalize any hardcoded versioned ROCm paths in the conda env back to the
+# portable /opt/rocm symlink.  AMD PyPI/conda packages (e.g. hip-python,
+# libomp configs) can embed an absolute path like /opt/rocm/... baked in
+# at this builder's ROCm version.  After this tree is copied into the ROCm
+# 7.2.3 runtime stage, /opt/rocm points at /opt/rocm, so the versioned
+# 7.1.1 paths would dangle.  Rewriting them to /opt/rocm (and normalizing the
+# 7.2.x lib/llvm layout to the standard llvm/ path) keeps them resolvable on
+# either ROCm version.  Binary files are skipped; their RPATHs already use the
+# /opt/rocm symlink because CMAKE_PREFIX_PATH above points at the symlink.
+RUN for dir in ${CONDA_DIR}/envs/cuopt_dev /rocopt-release; do \
+        grep -rl --binary-files=without-match '/opt/rocm-[0-9]' "$dir" 2>/dev/null \
+        | xargs -r sed -i \
+            -e 's|/opt/rocm-[0-9][0-9.]*/lib/llvm|/opt/rocm/llvm|g' \
+            -e 's|/opt/rocm-[0-9][0-9.]*|/opt/rocm|g'; \
+    done 2>/dev/null; true
+
+###############################################################################
+# STAGE 2 — RUNTIME (ROCm 7.2.3)
+# Copies the conda environment and the fully-built rocOpt tree from the
+# builder.  Contains no compiler invocation and no build-time GH credentials.
+###############################################################################
+FROM rocm/dev-ubuntu-24.04:${ROCM_RUNTIME_VERSION}-complete
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CONDA_DIR=/root/miniforge3
+
+# ROCm environment (use the /opt/rocm symlink for version portability)
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm
+ENV HIP_PLATFORM=amd
+ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake:${CMAKE_PREFIX_PATH}
+
+# Library and binary paths (mirror the builder so libcuopt.so / libmps_parser.so
+# and the conda env are findable at runtime)
+ENV PATH=/rocopt-release/cpp/build:${CONDA_DIR}/bin:/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/rocopt-release/cpp/build:/rocopt-release/cpp/libmps_parser/build:/opt/rocm/lib:/opt/rocm/lib64:${LD_LIBRARY_PATH}
+
+# MI300X (gfx942) runtime tuning
+ENV HSA_ENABLE_SDMA=0
+ENV GPU_MAX_HW_QUEUES=8
+
+# CuPy runtime configuration
+ENV CUPY_INSTALL_USE_HIP=1
+ENV ROCM_HOME=/opt/rocm
+
+# Detect HCC_AMDGPU_TARGET at shell/conda activation for CuPy/Numba JIT
+COPY scripts/detect_hcc_amdgpu_target.sh /usr/local/bin/detect_hcc_amdgpu_target.sh
+RUN chmod +x /usr/local/bin/detect_hcc_amdgpu_target.sh && \
+    mkdir -p "${CONDA_DIR}/envs/cuopt_dev/etc/conda/activate.d" && \
+    printf '%s\n' \
+        '#!/bin/bash' \
+        'source /usr/local/bin/detect_hcc_amdgpu_target.sh 2>/dev/null || true' \
+        > "${CONDA_DIR}/envs/cuopt_dev/etc/conda/activate.d/hcc_amdgpu_target.sh"
+
+# Convenience env vars for running the test suites
+ENV CUOPT_HOME=/rocopt-release
+ENV RAPIDS_DATASET_ROOT_DIR=/rocopt-release/datasets/
+
+# Minimal runtime dependencies (no compiler toolchain needed here)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    unzip \
+    ca-certificates \
+    bzip2 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clang version compatibility symlinks (numba-hip expects specific Clang dirs)
+RUN ACTUAL=$(ls -d /opt/rocm/llvm/lib/clang/[0-9]* 2>/dev/null | head -1) && \
+    if [ -n "${ACTUAL}" ]; then \
+        for v in 18 19 20 21 22 23; do \
+            [ -e "/opt/rocm/llvm/lib/clang/${v}" ] || \
+                ln -sf "${ACTUAL}" "/opt/rocm/llvm/lib/clang/${v}" 2>/dev/null || true; \
+        done; \
+    fi
+
+# --- Copy artifacts from the builder ---
+
+# Conda environment (Python + all installed packages, including built cuopt)
+COPY --from=builder ${CONDA_DIR} ${CONDA_DIR}
+
+# Full rocOpt tree (source, build artifacts, datasets, configs)
+COPY --from=builder /rocopt-release /rocopt-release
+
+# Initialize conda for interactive shells and auto-activate cuopt_dev
+RUN ${CONDA_DIR}/bin/conda init bash && \
+    echo "source /usr/local/bin/detect_hcc_amdgpu_target.sh 2>/dev/null || true" >> ~/.bashrc && \
+    echo "source ${CONDA_DIR}/bin/activate cuopt_dev" >> ~/.bashrc
+
+# Verify the runtime image
+RUN echo "=== rocOpt Runtime Image ===" && \
+    echo "ROCm runtime:  $(cat /opt/rocm/.info/version 2>/dev/null)" && \
+    echo "Compiled with: ROCm 7.1.1 amdclang++ (codegen workaround, ROCM-21706)" && \
+    echo "Python:        $(${CONDA_DIR}/envs/cuopt_dev/bin/python --version 2>&1)" && \
+    ls -lh /rocopt-release/cpp/build/libcuopt* 2>/dev/null && \
+    ls -lh /rocopt-release/cpp/libmps_parser/build/libmps_parser* 2>/dev/null || true
+
+ENV DEBIAN_FRONTEND=""
+SHELL ["/bin/bash", "-c"]
+WORKDIR /rocopt-release
 
 # Default command
 CMD ["/bin/bash"]

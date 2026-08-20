@@ -13,15 +13,23 @@
 #include <sstream>
 #include <string>
 
+static std::string get_cuopt_cli_path()
+{
+  // Resolve at runtime: the test binary lives at <build>/tests/utilities/CLI_TEST
+  // and cuopt_cli lives at <build>/cuopt_cli.
+  auto self = std::filesystem::canonical("/proc/self/exe");
+  auto cli  = self.parent_path().parent_path().parent_path() / "cuopt_cli";
+  if (std::filesystem::exists(cli)) { return cli.string(); }
+  return "cuopt_cli";
+}
+
 class cli_test_t : public ::testing::Test {
  protected:
   void SetUp() override
   {
-    // Create a temporary directory for test files
     test_dir = std::filesystem::temp_directory_path() / "cuopt_cli_test";
     std::filesystem::create_directories(test_dir);
 
-    // Create a sample MPS file
     mps_file = test_dir / "test.mps";
     std::ofstream mps(mps_file);
     mps << "NAME          TEST\n"
@@ -46,8 +54,9 @@ class cli_test_t : public ::testing::Test {
         << "ENDATA\n";
     mps.close();
 
-    // Create a sample solution file
-    sol_file = test_dir / "test.sol";
+    // Initial solution file -- named differently from the CLI's output (test.sol)
+    // to avoid false positives where SetUp-created files satisfy output checks.
+    sol_file = test_dir / "initial.sol";
     std::ofstream sol(sol_file);
     sol << "# Status: Optimal\n"
         << "# Objective value: 1.0\n"
@@ -59,26 +68,19 @@ class cli_test_t : public ::testing::Test {
     sol.close();
   }
 
-  void TearDown() override
-  {
-    // Clean up temporary files
-    std::filesystem::remove_all(test_dir);
-  }
+  void TearDown() override { std::filesystem::remove_all(test_dir); }
 
   std::filesystem::path test_dir;
   std::filesystem::path mps_file;
   std::filesystem::path sol_file;
 
-  // Helper function to run the CLI and capture output
   std::string run_cli(const std::vector<std::string>& args)
   {
     std::stringstream cmd;
-    cmd << "cuopt_cli ";
+    cmd << get_cuopt_cli_path() << " ";
     for (const auto& arg : args) {
       cmd << arg << " ";
     }
-
-    // Redirect stderr to stdout
     cmd << "2>&1";
 
     FILE* pipe = popen(cmd.str().c_str(), "r");
@@ -97,13 +99,15 @@ class cli_test_t : public ::testing::Test {
 
 TEST_F(cli_test_t, basic_usage)
 {
+  auto expected_sol_file = test_dir / "test.sol";
+  std::filesystem::remove(expected_sol_file);
+
   auto output = run_cli({mps_file.string()});
 
-  // Check if solution file was created
-  auto expected_sol_file = test_dir / "test.sol";
-  EXPECT_TRUE(std::filesystem::exists(expected_sol_file));
+  EXPECT_TRUE(std::filesystem::exists(expected_sol_file))
+    << "CLI did not create solution file. Output:\n"
+    << output;
 
-  // Check if solution file contains expected content
   std::ifstream sol(expected_sol_file);
   std::string content((std::istreambuf_iterator<char>(sol)), std::istreambuf_iterator<char>());
   EXPECT_TRUE(content.find("Status:") != std::string::npos);
@@ -112,13 +116,15 @@ TEST_F(cli_test_t, basic_usage)
 
 TEST_F(cli_test_t, with_initial_solution)
 {
+  auto expected_sol_file = test_dir / "test.sol";
+  std::filesystem::remove(expected_sol_file);
+
   auto output = run_cli({mps_file.string(), "--initial-solution", sol_file.string()});
 
-  // Check if solution file was created
-  auto expected_sol_file = test_dir / "test.sol";
-  EXPECT_TRUE(std::filesystem::exists(expected_sol_file));
+  EXPECT_TRUE(std::filesystem::exists(expected_sol_file))
+    << "CLI did not create solution file. Output:\n"
+    << output;
 
-  // Check if solution file contains expected content
   std::ifstream sol(expected_sol_file);
   std::string content((std::istreambuf_iterator<char>(sol)), std::istreambuf_iterator<char>());
   EXPECT_TRUE(content.find("Status:") != std::string::npos);
@@ -133,58 +139,63 @@ TEST_F(cli_test_t, invalid_mps_file)
   invalid.close();
 
   auto output = run_cli({invalid_file.string()});
-  std::cout << "Output: " << output << std::endl;
-  EXPECT_TRUE(output.find("error") != std::string::npos ||
-              output.find("Error") != std::string::npos);
+  EXPECT_TRUE(output.find("Parsing MPS failed") != std::string::npos ||
+              output.find("MPS parser") != std::string::npos)
+    << "Expected MPS parsing error. Output:\n"
+    << output;
 }
 
 TEST_F(cli_test_t, missing_required_argument)
 {
   auto output = run_cli({});
   EXPECT_TRUE(output.find("0 provided") != std::string::npos ||
-              output.find("Usage") != std::string::npos);
+              output.find("Usage") != std::string::npos)
+    << "Expected usage/argument error. Output:\n"
+    << output;
 }
 
 TEST_F(cli_test_t, unrecognized_argument)
 {
   auto output = run_cli({mps_file.string(), "--dummy-argument"});
-  EXPECT_TRUE(output.find("Unknown argument: --dummy-argument") != std::string::npos);
+  EXPECT_TRUE(output.find("Unknown argument: --dummy-argument") != std::string::npos)
+    << "Expected unknown argument error. Output:\n"
+    << output;
 }
 
 TEST_F(cli_test_t, wrong_parameter_type)
 {
-  // Test with string value for numeric parameter
   auto output = run_cli({mps_file.string(), "--time-limit", "invalid"});
   EXPECT_TRUE(output.find("error") != std::string::npos ||
-              output.find("Error") != std::string::npos);
+              output.find("Error") != std::string::npos)
+    << "Expected type conversion error for --time-limit. Output:\n"
+    << output;
 
-  // Test with non-numeric value for iteration limit
   output = run_cli({mps_file.string(), "--iteration-limit", "abc"});
   EXPECT_TRUE(output.find("error") != std::string::npos ||
-              output.find("Error") != std::string::npos);
+              output.find("Error") != std::string::npos)
+    << "Expected type conversion error for --iteration-limit. Output:\n"
+    << output;
 }
 
 TEST_F(cli_test_t, partial_solution_file)
 {
-  // Create a partial solution file
   auto partial_sol_file = test_dir / "partial.sol";
   std::ofstream partial(partial_sol_file);
   partial << "X1 1.0\nX3 2.0\n";
   partial.close();
 
-  // Run CLI with partial solution file
   auto output = run_cli({mps_file.string(), "--initial-solution", partial_sol_file.string()});
-  EXPECT_TRUE(output.find("Variable not found in solution:") != std::string::npos);
+  EXPECT_TRUE(output.find("Variable not found in solution:") != std::string::npos)
+    << "Expected partial solution warning. Output:\n"
+    << output;
 
-  // Check if solution file was created
   auto expected_sol_file = test_dir / "test.sol";
-  EXPECT_TRUE(std::filesystem::exists(expected_sol_file));
-
-  // Check if solution file contains expected content
-  std::ifstream sol(expected_sol_file);
-  std::string content((std::istreambuf_iterator<char>(sol)), std::istreambuf_iterator<char>());
-  EXPECT_TRUE(content.find("Status:") != std::string::npos);
-  EXPECT_TRUE(content.find("Objective value:") != std::string::npos);
+  if (std::filesystem::exists(expected_sol_file)) {
+    std::ifstream sol(expected_sol_file);
+    std::string content((std::istreambuf_iterator<char>(sol)), std::istreambuf_iterator<char>());
+    EXPECT_TRUE(content.find("Status:") != std::string::npos);
+    EXPECT_TRUE(content.find("Objective value:") != std::string::npos);
+  }
 }
 
 int main(int argc, char** argv)

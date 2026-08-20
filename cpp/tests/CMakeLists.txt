@@ -131,7 +131,8 @@ function(ConfigureTest CMAKE_TEST_NAME)
       target_link_options(${CMAKE_TEST_NAME} PRIVATE -Wl,--enable-new-dtags)
     endif()
 
-    add_test(NAME ${CMAKE_TEST_NAME} COMMAND ${CMAKE_TEST_NAME})
+    add_test(NAME ${CMAKE_TEST_NAME} COMMAND ${CMAKE_TEST_NAME}
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
 
     install(
         TARGETS ${CMAKE_TEST_NAME}

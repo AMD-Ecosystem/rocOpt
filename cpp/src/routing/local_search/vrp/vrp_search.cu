@@ -8,6 +8,7 @@
 
 #include "vrp_execute.cuh"
 #include "vrp_search.cuh"
+#include <routing/utilities/constants.hpp>
 
 namespace cuopt {
 namespace routing {
@@ -383,10 +384,12 @@ DI bool get_nodes_to_consider(typename solution_t<i_t, f_t, REQUEST>::view_t& so
                               typename move_candidates_t<i_t, f_t>::view_t& move_candidates,
                               search_data_t<i_t>& search_data,
                               bool outgoing_direction,
-                              bool recycle)
+                              bool recycle,
+                              i_t neighbor_offset = 0)
 {
   constexpr bool exclude_self_in_neighbors = true;
   const int max_neighbors                  = min(max_n_neighbors, solution.get_num_orders());
+  const i_t neighbor_idx                   = threadIdx.x + neighbor_offset;
   if (search_data.block_node_id >= solution.get_num_orders()) {
     search_data.start_idx_1       = 0;
     i_t depot_after_special_index = search_data.block_node_id - solution.get_num_orders();
@@ -406,10 +409,10 @@ DI bool get_nodes_to_consider(typename solution_t<i_t, f_t, REQUEST>::view_t& so
                                                       exclude_self_in_neighbors,
                                                       neighbor_batch);
       // there is no relocate out for the depot location
-      if (outgoing_direction || threadIdx.x >= search_data.nodes_to_consider.size()) {
+      if (outgoing_direction || neighbor_idx >= search_data.nodes_to_consider.size()) {
         return false;
       }
-      search_data.node_id_2 = search_data.nodes_to_consider[threadIdx.x];
+      search_data.node_id_2 = search_data.nodes_to_consider[neighbor_idx];
     }
   } else {
     if (!recycle) {
@@ -426,9 +429,9 @@ DI bool get_nodes_to_consider(typename solution_t<i_t, f_t, REQUEST>::view_t& so
                                                           max_neighbors,
                                                           exclude_self_in_neighbors);
       }
-      if (threadIdx.x >= search_data.nodes_to_consider.size()) { return false; }
+      if (neighbor_idx >= search_data.nodes_to_consider.size()) { return false; }
 
-      search_data.node_id_2 = search_data.nodes_to_consider[threadIdx.x];
+      search_data.node_id_2 = search_data.nodes_to_consider[neighbor_idx];
       if (outgoing_direction) { raft::swapVals(search_data.block_node_id, search_data.node_id_2); }
     }
     search_data.start_idx_1 =
@@ -441,7 +444,8 @@ template <typename i_t, typename f_t, request_t REQUEST>
 DI bool get_work_config(typename solution_t<i_t, f_t, REQUEST>::view_t& solution,
                         typename move_candidates_t<i_t, f_t>::view_t& move_candidates,
                         search_data_t<i_t>& search_data,
-                        bool recycle)
+                        bool recycle,
+                        i_t neighbor_offset = 0)
 {
   // each move type considers all nodes + insertion after depot
   auto searched_nodes = move_candidates.nodes_to_search;
@@ -465,7 +469,7 @@ DI bool get_work_config(typename solution_t<i_t, f_t, REQUEST>::view_t& solution
   if (move_category <= (i_t)vrp_move_t::CROSS) {
     constexpr bool outgoing_relocate = false;
     bool valid_work_load             = get_nodes_to_consider<i_t, f_t, REQUEST>(
-      solution, move_candidates, search_data, outgoing_relocate, recycle);
+      solution, move_candidates, search_data, outgoing_relocate, recycle, neighbor_offset);
     if (!valid_work_load) { return true; }
     search_data.move_type      = move_category;
     const i_t n_reverse_types  = 4;
@@ -516,7 +520,7 @@ DI bool get_work_config(typename solution_t<i_t, f_t, REQUEST>::view_t& solution
     const i_t n_directions = 2;
     bool outgoing_relocate = move_type % n_directions;
     bool valid_work_load   = get_nodes_to_consider<i_t, f_t, REQUEST>(
-      solution, move_candidates, search_data, outgoing_relocate, recycle);
+      solution, move_candidates, search_data, outgoing_relocate, recycle, neighbor_offset);
     if (!valid_work_load) { return true; }
     const i_t n_reverse_types = 2;
     i_t direction_move_type   = move_type / 2;
@@ -546,7 +550,7 @@ DI bool get_work_config(typename solution_t<i_t, f_t, REQUEST>::view_t& solution
     if (solution.problem.has_non_uniform_breaks()) { return true; }
     constexpr bool outgoing_relocate = false;
     bool valid_work_load             = get_nodes_to_consider<i_t, f_t, REQUEST>(
-      solution, move_candidates, search_data, outgoing_relocate, recycle);
+      solution, move_candidates, search_data, outgoing_relocate, recycle, neighbor_offset);
     if (!valid_work_load) { return true; }
     search_data.move_type   = move_category;
     search_data.offset      = 0;
@@ -565,13 +569,17 @@ DI bool get_work_config(typename solution_t<i_t, f_t, REQUEST>::view_t& solution
 template <typename i_t, typename f_t, request_t REQUEST>
 __global__ void find_vrp_moves_kernel(typename solution_t<i_t, f_t, REQUEST>::view_t solution,
                                       typename move_candidates_t<i_t, f_t>::view_t move_candidates,
-                                      bool recycle)
+                                      bool recycle,
+                                      i_t max_neighbors_to_process)
 {
   extern __shared__ double shmem[];
+  const i_t tpb = blockDim.x;
+  for (i_t neighbor_offset = 0; neighbor_offset < max_neighbors_to_process;
+       neighbor_offset += tpb) {
   search_data_t<i_t> search_data;
   bool early_exit =
-    get_work_config<i_t, f_t, REQUEST>(solution, move_candidates, search_data, recycle);
-  if (early_exit) return;
+    get_work_config<i_t, f_t, REQUEST>(solution, move_candidates, search_data, recycle, neighbor_offset);
+  if (early_exit) { if (recycle) return; else continue; }
   i_t r_id_1;
   if (search_data.block_node_id >= solution.get_num_orders()) {
     r_id_1 = search_data.block_node_id - solution.get_num_orders();
@@ -580,7 +588,7 @@ __global__ void find_vrp_moves_kernel(typename solution_t<i_t, f_t, REQUEST>::vi
   }
 
   i_t r_id_2 = solution.route_node_map.route_id_per_node[search_data.node_id_2];
-  if (r_id_1 == -1 || r_id_2 == -1 || r_id_1 == r_id_2) return;
+  if (r_id_1 == -1 || r_id_2 == -1 || r_id_1 == r_id_2) continue;
   cuopt_assert(r_id_1 < solution.routes.size(), "route id should be in range!");
   auto route_1 = solution.routes[r_id_1];
   auto route_2 = solution.routes[r_id_2];
@@ -588,7 +596,7 @@ __global__ void find_vrp_moves_kernel(typename solution_t<i_t, f_t, REQUEST>::vi
   if (search_data.start_idx_1 + search_data.frag_size_1 >= route_1.get_num_nodes() ||
       search_data.start_idx_2 + search_data.frag_size_2 >= route_2.get_num_nodes() ||
       search_data.start_idx_2 < 0 || route_1.get_num_nodes() <= 1 || route_2.get_num_nodes() <= 1) {
-    return;
+    continue;
   }
   size_t size_of_frag = dimensions_route_t<i_t, f_t, REQUEST>::get_shared_size(
     max_fragment_size, solution.problem.dimensions_info);
@@ -604,7 +612,7 @@ __global__ void find_vrp_moves_kernel(typename solution_t<i_t, f_t, REQUEST>::vi
   double cost_delta, selection_delta;
   if (search_data.move_type > (i_t)vrp_move_t::RELOCATE) {
     // 2-opt* doesn't work with special nodes
-    if (solution.problem.has_special_nodes()) { return; }
+    if (solution.problem.has_special_nodes()) { continue; }
     if (solution.problem.fleet_info.is_homogenous_fleet()) {
       thrust::tie(cost_delta, selection_delta) =
         evaluate_2_opt_star_move_homogenous<i_t, f_t, REQUEST>(
@@ -628,7 +636,7 @@ __global__ void find_vrp_moves_kernel(typename solution_t<i_t, f_t, REQUEST>::vi
   i_t route_pair_idx =
     move_candidates.vrp_move_candidates.get_route_pair_idx(r_id_1, r_id_2, solution.n_routes);
 
-  if (cost_delta > -EPSILON) return;
+  if (cost_delta > -EPSILON) continue;
   // for VRP and sliding kernels we record only negative moves with working weights but execute with
   // the alpha and beta
   move_candidates.vrp_move_candidates.record_candidate(
@@ -641,6 +649,7 @@ __global__ void find_vrp_moves_kernel(typename solution_t<i_t, f_t, REQUEST>::vi
     search_data.offset,
     selection_delta,
     move_candidates.nodes_to_search.active_nodes_impacted);
+  }
 }
 
 template <typename i_t, typename f_t, request_t REQUEST>
@@ -653,11 +662,20 @@ bool find_vrp_moves(solution_t<i_t, f_t, REQUEST>& sol,
 
   if (sol.problem_ptr->is_cvrp()) {
     compute_reverse_distances<i_t, f_t, REQUEST>
-      <<<sol.get_n_routes(), 32, 0, sol.sol_handle->get_stream()>>>(sol.view());
+      <<<sol.get_n_routes(), warp_size, 0, sol.sol_handle->get_stream()>>>(sol.view());
   }
-  i_t TPB             = std::min(max_n_neighbors, sol.problem_ptr->get_num_orders());
+  i_t max_neighbors   = std::min(max_n_neighbors, sol.problem_ptr->get_num_orders());
+  i_t TPB             = max_neighbors;
   size_t size_of_frag = dimensions_route_t<i_t, f_t, REQUEST>::get_shared_size(
     max_fragment_size, sol.problem_ptr->dimensions_info);
+
+  if (size_of_frag > 0) {
+    int max_shmem = get_device_max_shmem_per_block();
+    i_t max_tpb   = static_cast<i_t>(max_shmem) / static_cast<i_t>(size_of_frag);
+    if (max_tpb < 1) max_tpb = 1;
+    TPB = std::min(TPB, max_tpb);
+  }
+
   size_t sh_size           = size_of_frag * TPB;
   i_t n_of_nodes_to_search = move_candidates.nodes_to_search.n_sampled_nodes;
   i_t n_blocks;
@@ -672,11 +690,15 @@ bool find_vrp_moves(solution_t<i_t, f_t, REQUEST>& sol,
   if (!set_shmem_of_kernel(find_vrp_moves_kernel<i_t, f_t, REQUEST>, sh_size)) { return false; }
   move_candidates.vrp_move_candidates.find_kernel_graph.start_capture(sol.sol_handle->get_stream());
   move_candidates.vrp_move_candidates.reset(sol.sol_handle);
+  i_t neighbors_arg = recycle ? TPB : max_neighbors;
   find_vrp_moves_kernel<i_t, f_t, REQUEST>
     <<<n_blocks, TPB, sh_size, sol.sol_handle->get_stream()>>>(
-      sol.view(), move_candidates.view(), recycle);
+      sol.view(), move_candidates.view(), recycle, neighbors_arg);
   move_candidates.vrp_move_candidates.find_kernel_graph.end_capture(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_TRACE("find_vrp_moves_kernel", "blocks=%d TPB=%d", n_blocks, TPB);
   move_candidates.vrp_move_candidates.find_kernel_graph.launch_graph(sol.sol_handle->get_stream());
+  RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("find_vrp_moves_kernel", sol.sol_handle->get_stream());
   sol.sol_handle->sync_stream();
   return true;
 }

@@ -830,8 +830,15 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
 #endif
     print_final_termination_criteria(
       timer, current_termination_strategy_.get_convergence_information(), termination_current);
-    return optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
-                                                     stream_view_};
+    // Return the current solution and warm-start data with correct dimensions
+    // so that callers can inspect partial progress without dimension mismatches.
+    return current_termination_strategy_.fill_return_problem_solution(
+      internal_solver_iterations_,
+      pdhg_solver_,
+      pdhg_solver_.get_primal_solution(),
+      pdhg_solver_.get_dual_solution(),
+      get_filled_warmed_start_data(),
+      pdlp_termination_status_t::NumericalError);
   }
 
   // If not infeasible and not pdlp_termination_status_t::Optimal and no error, record best so far
@@ -1356,8 +1363,15 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
     if (pdlp_hyper_params::never_restart_to_average)
       restart_strategy_.increment_iteration_since_last_restart();
   }
-  return optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
-                                                   stream_view_};
+  // Return the current solution and warm-start data with correct dimensions
+  // so that callers can inspect partial progress without dimension mismatches.
+  return current_termination_strategy_.fill_return_problem_solution(
+    internal_solver_iterations_,
+    pdhg_solver_,
+    pdhg_solver_.get_primal_solution(),
+    pdhg_solver_.get_dual_solution(),
+    get_filled_warmed_start_data(),
+    pdlp_termination_status_t::NumericalError);
 }
 
 template <typename i_t, typename f_t>

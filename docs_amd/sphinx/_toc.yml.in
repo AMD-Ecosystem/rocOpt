@@ -1,0 +1,29 @@
+defaults:
+  numbered: False
+root: index
+
+subtrees:
+- entries:
+  - file: what_is_rocopt.rst
+    title: What is rocOpt?
+
+- caption: Installation
+  entries:
+  - file: install/install_rocopt.rst
+    title: Installing rocOpt
+
+- caption: Reference
+  entries:
+  - file: reference/c-api-reference.rst
+  - file: reference/python-api-reference.rst
+    title: Python API
+  - file: reference/mps-parser-api-reference.rst
+  - file: reference/server-api-reference.rst
+
+- caption: Examples
+  entries:
+  - file: examples/rocopt-example.rst
+
+- caption: About
+  entries:
+  - file: license.rst

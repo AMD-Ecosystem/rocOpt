@@ -1,0 +1,16 @@
+# Pip constraints for ROCm builds.
+# Prevents pip from installing NVIDIA CUDA stubs or downgrading AMD packages.
+#
+# Usage: pip install --constraint rocm_pip_constraints.txt <package>
+#   or:  export PIP_CONSTRAINT=/path/to/rocm_pip_constraints.txt
+#
+# The amd-cupy and amd-hipdf packages from AMD's ROCm PyPI provide the cupy
+# and cudf modules respectively. The NVIDIA stub packages on regular PyPI
+# (version 0.0.2) must never be installed as they are empty placeholders.
+
+amd-cupy>=13.5.1
+amd-hipmm>=4.0.0
+amd-libhipmm>=4.0.0
+amd-hipdf>=2.0.0
+amd-libhipdf>=2.0.0
+amd-pylibhipdf>=2.0.0

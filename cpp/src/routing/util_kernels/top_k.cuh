@@ -91,6 +91,13 @@ DI int top_k_indices_per_row(i_t row_id,
   using block_reduce          = hipcub::BlockReduce<int, TPB>;
   using temp_reduce_storage_t = typename block_reduce::TempStorage;
 
+#ifdef __HIP_PLATFORM_AMD__
+  using hip_key_cost_sort      = hipcub::BlockRadixSort<double, TPB, items_per_thread, output_t>;
+  using temp_hip_kc_sort_t     = typename hip_key_cost_sort::TempStorage;
+  using hip_key_idx_sort       = hipcub::BlockRadixSort<double, TPB, items_per_thread, int>;
+  using temp_hip_ki_sort_t     = typename hip_key_idx_sort::TempStorage;
+#endif
+
   __shared__ union {
     temp_load_storage_t load;
     temp_load_sort_storage_t load_sort;
@@ -99,6 +106,10 @@ DI int top_k_indices_per_row(i_t row_id,
     temp_key_storage_t store_key;
     temp_val_storage_t store_val;
     temp_reduce_storage_t reduce;
+#ifdef __HIP_PLATFORM_AMD__
+    temp_hip_kc_sort_t hip_kc_sort;
+    temp_hip_ki_sort_t hip_ki_sort;
+#endif
   } temp_storage;
 
   output_t sort_cost[items_per_thread];
@@ -141,27 +152,15 @@ DI int top_k_indices_per_row(i_t row_id,
     block_sort(temp_storage.sort).Sort(sort_cost, col_id);
   } else {
 #ifdef __HIP_PLATFORM_AMD__
-    // HIP/rocprim doesn't support decomposer with cuda::std::tuple
-    // Sort output_t values by their selection_delta, col_id follows
-    // Since we need to sort both arrays by the same key, we do two passes:
-    // 1. Sort (selection_delta, sort_cost) to reorder sort_cost
-    // 2. Sort (selection_delta, col_id) to reorder col_id
-    // Both use the same original keys so they end up in the same order
     double sort_keys[items_per_thread];
     double sort_keys2[items_per_thread];
     for (int i = 0; i < items_per_thread; ++i) {
       sort_keys[i] = sort_cost[i].selection_delta;
       sort_keys2[i] = sort_cost[i].selection_delta;
     }
-    // Sort sort_cost by selection_delta
-    using key_cost_sort = hipcub::BlockRadixSort<double, TPB, items_per_thread, output_t>;
-    __shared__ typename key_cost_sort::TempStorage kc_sort_storage;
-    key_cost_sort(kc_sort_storage).Sort(sort_keys, sort_cost);
+    hip_key_cost_sort(temp_storage.hip_kc_sort).Sort(sort_keys, sort_cost);
     __syncthreads();
-    // Sort col_id by the same original selection_delta values
-    using key_idx_sort = hipcub::BlockRadixSort<double, TPB, items_per_thread, int>;
-    __shared__ typename key_idx_sort::TempStorage ki_sort_storage;
-    key_idx_sort(ki_sort_storage).Sort(sort_keys2, col_id);
+    hip_key_idx_sort(temp_storage.hip_ki_sort).Sort(sort_keys2, col_id);
 #else
     block_sort(temp_storage.sort).Sort(sort_cost, col_id, decomposer_t<output_t>{});
 #endif
@@ -176,6 +175,7 @@ DI int top_k_indices_per_row(i_t row_id,
     // This step tries to load a maximum of load_items_per_iteration
     // which is set to k
     load_len = min(load_items_per_iteration, num_cols - col_offset);
+
     block_load(temp_storage.load)
       .Load(row_costs.data() + col_offset, load_cost, load_len, get_default<output_t>());
 
@@ -213,20 +213,15 @@ DI int top_k_indices_per_row(i_t row_id,
       block_sort(temp_storage.sort).Sort(sort_cost, col_id);
     } else {
 #ifdef __HIP_PLATFORM_AMD__
-      // HIP/rocprim doesn't support decomposer with cuda::std::tuple
       double sort_keys[items_per_thread];
       double sort_keys2[items_per_thread];
       for (int i = 0; i < items_per_thread; ++i) {
         sort_keys[i] = sort_cost[i].selection_delta;
         sort_keys2[i] = sort_cost[i].selection_delta;
       }
-      using key_cost_sort = hipcub::BlockRadixSort<double, TPB, items_per_thread, output_t>;
-      __shared__ typename key_cost_sort::TempStorage kc_sort_storage2;
-      key_cost_sort(kc_sort_storage2).Sort(sort_keys, sort_cost);
+      hip_key_cost_sort(temp_storage.hip_kc_sort).Sort(sort_keys, sort_cost);
       __syncthreads();
-      using key_idx_sort = hipcub::BlockRadixSort<double, TPB, items_per_thread, int>;
-      __shared__ typename key_idx_sort::TempStorage ki_sort_storage2;
-      key_idx_sort(ki_sort_storage2).Sort(sort_keys2, col_id);
+      hip_key_idx_sort(temp_storage.hip_ki_sort).Sort(sort_keys2, col_id);
 #else
       block_sort(temp_storage.sort).Sort(sort_cost, col_id, decomposer_t<output_t>{});
 #endif

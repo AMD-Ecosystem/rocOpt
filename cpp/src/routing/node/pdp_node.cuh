@@ -74,7 +74,7 @@ class request_info_t<i_t, REQUEST, std::enable_if_t<REQUEST == request_t::PDP>> 
  public:
   request_info_t() = default;
 
-  DI request_info_t(detail::NodeInfo<i_t> info_, detail::NodeInfo<i_t> brother_info_)
+  HDI request_info_t(detail::NodeInfo<i_t> info_, detail::NodeInfo<i_t> brother_info_)
     : info(info_), brother_info(brother_info_)
   {
     if (info_.is_service_node()) {
@@ -120,8 +120,8 @@ class request_info_t<i_t, REQUEST, std::enable_if_t<REQUEST == request_t::VRP>> 
  public:
   request_info_t() = default;
 
-  DI request_info_t(detail::NodeInfo<i_t> info_) : info(info_) {}
-  DI request_info_t(detail::NodeInfo<i_t> info_, detail::NodeInfo<i_t> brother_info_) : info(info_)
+  HDI request_info_t(detail::NodeInfo<i_t> info_) : info(info_) {}
+  HDI request_info_t(detail::NodeInfo<i_t> info_, detail::NodeInfo<i_t> brother_info_) : info(info_)
   {
   }
 

@@ -70,7 +70,7 @@ cuopt_int_t test_simple_qp()
   cuopt_int_t nnz = 2;
 
   // CSR format constraint matrix
-  // https://docs.nvidia.com/nvpl/latest/sparse/storage_format/sparse_matrix.html#compressed-sparse-row-csr
+  // https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
   cuopt_int_t row_offsets[] = {0, 2};
   cuopt_int_t column_indices[] = {0, 1};
   cuopt_float_t values[] = {1.0, 1.0};

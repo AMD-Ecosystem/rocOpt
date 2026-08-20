@@ -65,14 +65,12 @@ __global__ void fill_time_windows(
     if (i == depot) { continue; }
     f_t time = mat[node * row_size + i];
     if (sh_time_node_furthest_node < time) {
-      while (atomicCAS_block(&sh_lock, 0, 1)) {}
-      __threadfence_block();
-      if (sh_time_node_furthest_node < time) {
-        sh_time_node_furthest_node = time;
-        sh_furthest_node           = i;
-      }
-      __threadfence_block();
-      sh_lock = 0;
+      with_lock_block(&sh_lock, [&]() {
+        if (sh_time_node_furthest_node < time) {
+          sh_time_node_furthest_node = time;
+          sh_furthest_node           = i;
+        }
+      });
     }
   }
   __syncthreads();

@@ -3,9 +3,6 @@
 
 import numpy as np
 
-import cudf
-import pylibcudf as plc
-
 from cuopt.linear_programming.solver.solver_parameters import (
     CUOPT_ABSOLUTE_PRIMAL_TOLERANCE,
     CUOPT_MIP_INTEGRALITY_TOLERANCE,
@@ -13,29 +10,68 @@ from cuopt.linear_programming.solver.solver_parameters import (
 )
 
 
+def series_to_pylist(series):
+    """Convert a cuDF or pandas Series-like object to a plain Python list.
+
+    On NVIDIA cuOpt, post-solve results are cuDF Series and the canonical
+    way to convert them to Python lists is ``series.to_arrow().to_pylist()``.
+
+    On ROCm-DS, ``series_from_buf`` (and other compatibility shims) returns
+    a *pandas* Series instead of a cudf Series, because pylibhipdf's
+    ``Column.from_rmm_buffer`` aborts at the C level when handed cuOpt RMM
+    buffers.  Pandas Series do not have a ``to_arrow`` method, so callers
+    that hard-code ``.to_arrow().to_pylist()`` crash with
+    ``AttributeError: 'Series' object has no attribute 'to_arrow'``.
+
+    This helper accepts either backend (cuDF Series, pandas Series, or
+    anything that exposes ``tolist`` / ``to_pandas``) and always returns a
+    Python ``list``.  Use it in place of ``.to_arrow().to_pylist()`` so the
+    same code path works on both NVIDIA and AMD GPUs.
+    """
+    if series is None:
+        return None
+    to_arrow = getattr(series, "to_arrow", None)
+    if callable(to_arrow):
+        return to_arrow().to_pylist()
+    to_pandas = getattr(series, "to_pandas", None)
+    if callable(to_pandas):
+        series = to_pandas()
+    tolist = getattr(series, "tolist", None)
+    if callable(tolist):
+        return tolist()
+    return list(series)
+
+
 def series_from_buf(buf, dtype):
-    """Helper function to create a cudf series from a buffer.
+    """Helper function to create a pandas Series from a device buffer.
 
     Parameters
     ----------
-    buf : cudf.core.buffer.Buffer
-        The buffer containing the data
+    buf : rmm.DeviceBuffer
+        The device buffer containing the data
     dtype : pyarrow.dtype or type
         The data type for the Series
 
     Returns
     -------
-    cudf.Series
-        A cudf Series built from the buffer
-    """
-    col = plc.column.Column.from_rmm_buffer(
-        buf,
-        dtype=plc.types.DataType.from_arrow(dtype),
-        size=buf.size // dtype.byte_width,
-        children=[],
-    )
+    pandas.Series
+        A Series built by copying device data to host via numpy.
 
-    return cudf.Series.from_pylibcudf(col)
+    Notes
+    -----
+    The original NVIDIA path used pylibcudf.column.Column.from_rmm_buffer()
+    to stay on-device with cudf.  On ROCm-DS the amd-pylibhipdf version of
+    that function triggers a C-level abort() when called with cuOpt's RMM
+    buffers, which cannot be caught by Python exception handling.  We
+    therefore always copy to host, which is safe and sufficient for all
+    current cuOpt post-solve result extraction.
+    """
+    import pandas as pd
+
+    np_dtype = dtype.to_pandas_dtype()
+    raw = buf.copy_to_host()
+    host_array = np.frombuffer(raw, dtype=np_dtype)
+    return pd.Series(host_array)
 
 
 def validate_variable_bounds(data, settings, solution):

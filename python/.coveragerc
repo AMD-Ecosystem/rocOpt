@@ -1,6 +1,86 @@
 # Configuration file for Python coverage tests
+#
+# parallel/sigterm are required so subprocesses (cuopt_service + its
+# multiprocessing-spawned webserver and solver workers) write their own
+# .coverage.<host>.<pid>.<n> fragments instead of clobbering the main
+# pytest .coverage file. `coverage combine` (invoked from
+# scripts/lib/run-python-coverage.sh) merges them back.
+#
+# `source`/`include` is deliberately left to pytest-cov in the
+# in-container runner (--cov=<pkg>). Setting `include` here just produced
+# the noisy "--include is ignored because --source is set" warning we saw
+# in CI logs because --cov=<pkg> implicitly sets source=<pkg>.
 [run]
-include = cuopt/cuopt/*
-          cuopt_server/cuopt_server/*
-omit = cuopt_server/cuopt_server/tests/*
-       cuopt/cuopt/tests/*
+parallel = True
+sigterm = True
+# `concurrency = multiprocessing,thread` is required for the cuopt_service
+# subprocess tree, which forks multiprocessing.Process workers (webserver,
+# per-GPU solver) and uses queue feeder threads internally. Without this:
+#   * forked children inherit the parent's Coverage instance in memory but
+#     coverage never registers an os.register_at_fork hook, so the children
+#     don't get a fresh per-pid data file -- their accumulated data is then
+#     lost when the parent SIGKILLs them via psutil.Process(pid).kill() in
+#     process_handler.terminate().
+#   * thread-local trace state in queue feeder threads is also not flushed.
+# With this set, coverage installs the fork hook + thread tracer, each
+# child writes its own .coverage.<host>.<pid>.<rand> fragment on (clean)
+# exit, and `coverage combine` merges them back.
+concurrency = multiprocessing,thread
+# `patch = _exit, subprocess` is defence-in-depth for the multiprocessing
+# child exit path. multiprocessing.popen_fork terminates the child via
+# `os._exit(code)` after BaseProcess._bootstrap returns -- which bypasses
+# atexit entirely. coverage's `concurrency = multiprocessing` patch wraps
+# _bootstrap so cov.save() runs in a finally clause BEFORE that os._exit
+# fires, which normally handles this. `patch = _exit` adds a second line
+# of defence: it monkey-patches os._exit itself to call cov.save() before
+# the real _exit -- so even if the _bootstrap wrapper is bypassed (e.g.
+# code that calls os._exit() directly, or a future coverage version that
+# changes its patching surface), we still get the fragment. `subprocess`
+# instruments subprocess.Popen children even when they don't go through
+# our sitecustomize.py shim (legacy/Popen mode -- doesn't affect TestClient
+# mode, but is harmless and keeps both test modes consistent).
+patch = _exit, subprocess
+omit =
+    */tests/*
+    */conftest.py
+    */_version.py
+
+# [paths] canonicalisation. The three Python pytest suites run from three
+# different working directories (python/cuopt, python/cuopt_server/cuopt_server,
+# python/cuopt_self_hosted), so coverage stores each suite's data under a
+# different root prefix for the SAME source files. Without [paths],
+# `coverage combine` treats them as distinct files and the final --include
+# filter (absolute paths) excludes everything ("No data to report").
+#
+# Each section name is arbitrary; the first entry is the canonical path
+# combine rewrites the others to. Order: canonical first, then patterns
+# coverage should rewrite into the canonical form.
+[paths]
+cuopt =
+    /rocopt-release/python/cuopt/cuopt
+    cuopt
+    */python/cuopt/cuopt
+cuopt_server =
+    /rocopt-release/python/cuopt_server/cuopt_server
+    cuopt_server
+    */python/cuopt_server/cuopt_server
+cuopt_sh_client =
+    /rocopt-release/python/cuopt_self_hosted/cuopt_sh_client
+    cuopt_sh_client
+    */python/cuopt_self_hosted/cuopt_sh_client
+    # The conda env ships an installed copy at
+    #   /root/miniforge3/envs/cuopt_dev/lib/python3.12/site-packages/cuopt_sh_client/
+    # and `from cuopt_sh_client import ...` in the cuopt_self_hosted tests
+    # imports that installed copy (it precedes the local source on sys.path
+    # because pytest runs from inside python/cuopt_self_hosted/cuopt_sh_client/
+    # and pytest's rootdir-added entry doesn't reach the local package).
+    # Without this pattern, coverage records lines under the site-packages
+    # path and the final --include="*/python/cuopt_self_hosted/cuopt_sh_client/*"
+    # filter drops them ("No data to report" in the cuopt_sh_client bucket).
+    */site-packages/cuopt_sh_client
+
+[report]
+exclude_also =
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:

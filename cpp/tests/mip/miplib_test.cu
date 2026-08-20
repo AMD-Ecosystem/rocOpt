@@ -60,8 +60,13 @@ void test_miplib_file(result_map_t test_instance, mip_solver_settings_t<int, dou
   // TODO test integrality as well
 }
 
+// TODO(ROCm): MIP B&B internally calls the Barrier solver which requires
+// cuDSS (NVIDIA sparse direct solver, not available on ROCm).
 TEST(mip_solve, run_small_tests)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   mip_solver_settings_t<int, double> settings;
   std::vector<result_map_t> test_instances = {
     {"mip/50v-10.mps", 11311031.}, {"mip/neos5.mps", 15.}, {"mip/swath1.mps", 1300.}};

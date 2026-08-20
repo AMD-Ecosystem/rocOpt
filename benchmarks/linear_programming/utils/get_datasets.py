@@ -693,7 +693,7 @@ def download_dataset(name, root):
         print(f"Dataset {name} doesn't have a URL. Skipping...")
         return
     else:
-        os.mkdir(dir)
+        os.makedirs(dir, exist_ok=True)
     file = os.path.join(dir, os.path.basename(url))
     download(url, file)
     extract(file, dir, type)

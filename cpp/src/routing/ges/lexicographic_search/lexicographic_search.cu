@@ -522,48 +522,49 @@ __global__ void lexicographic_search(typename solution_t<i_t, f_t, REQUEST>::vie
     i_t total_random_counter = reusable_shmem[2 * raft::WarpSize - 1];
     cuopt_assert(total_random_counter > 0, "total_random_counter should be greater than 0");
     uint32_t old_p_val_seq = atomicMin(global_min_p, block_p_val_seq);
-    while (atomicExch(solution.lock, 1) != 0)
-      ;  // acquire
-    __threadfence();
-    if (global_min_p[0] == block_p_val_seq) {
-      bool update = true;
-      // if it is the same value, use conditional probability to update
-      if (old_p_val_seq == block_p_val_seq) {
-        i_t old_counter        = *global_random_counter;
-        i_t new_counter        = old_counter + total_random_counter;
-        *global_random_counter = old_counter + total_random_counter;
-        raft::random::PCGenerator global_rng(2829, old_counter, 0);
-        update = (global_rng.next_u32() % new_counter) >= old_counter;
-      }
-      // otherwise just update and reset the counter
-      else {
-        *global_random_counter = total_random_counter;
-      }
-
-      if (update) {
-        // Sad uncoallsced global writes of route then the thread found best sequence
-        global_sequence[0] = blockIdx.x;
-        if constexpr (REQUEST == request_t::PDP) {
-          cuopt_assert(
-            node_stack.best_sequence_size > node_stack.delivery_insertion_idx_in_permutation,
-            "Sequence size should be bigger than delivery_insertion_idx_in_permutation");
-        }
-        cuopt_assert((node_stack.best_sequence_size <= max_neighbors<i_t, REQUEST>(k_max)),
-                     "Sequence size should be smaller than 2*k_max +1 ");
-        global_sequence[1] = node_stack.best_sequence_size;
-        for (i_t i = 0; i < node_stack.best_sequence_size; ++i) {
-          global_sequence[i + 2] = node_stack.get_best_sequnce(i);
-        }
-      }
-      // if we are at the min_p_score and best sequence size, conditionally update the global
-      // values according to global counter
-      cuopt_assert(node_stack.min_p_score > 0,
-                   "P score should be greater than 0 when sequence is greater than 1");
-      cuopt_assert(node_stack.min_p_score < p_scores[request_id->info.node()],
-                   "P score should be smaller than requests ");
+    while (!acquire_lock(solution.lock)) {
+#if defined(__HIP_PLATFORM_AMD__)
+      __builtin_amdgcn_s_sleep(8);
+#endif
     }
-    __threadfence();
-    *(solution.lock) = 0;  // release
+    {
+      if (global_min_p[0] == block_p_val_seq) {
+        bool update = true;
+        // if it is the same value, use conditional probability to update
+        if (old_p_val_seq == block_p_val_seq) {
+          i_t old_counter        = *global_random_counter;
+          i_t new_counter        = old_counter + total_random_counter;
+          *global_random_counter = old_counter + total_random_counter;
+          raft::random::PCGenerator global_rng(2829, old_counter, 0);
+          update = (global_rng.next_u32() % new_counter) >= old_counter;
+        }
+        // otherwise just update and reset the counter
+        else {
+          *global_random_counter = total_random_counter;
+        }
+
+        if (update) {
+          // Sad uncoallsced global writes of route then the thread found best sequence
+          global_sequence[0] = blockIdx.x;
+          if constexpr (REQUEST == request_t::PDP) {
+            cuopt_assert(
+              node_stack.best_sequence_size > node_stack.delivery_insertion_idx_in_permutation,
+              "Sequence size should be bigger than delivery_insertion_idx_in_permutation");
+          }
+          cuopt_assert((node_stack.best_sequence_size <= max_neighbors<i_t, REQUEST>(k_max)),
+                       "Sequence size should be smaller than 2*k_max +1 ");
+          global_sequence[1] = node_stack.best_sequence_size;
+          for (i_t i = 0; i < node_stack.best_sequence_size; ++i) {
+            global_sequence[i + 2] = node_stack.get_best_sequnce(i);
+          }
+        }
+        cuopt_assert(node_stack.min_p_score > 0,
+                     "P score should be greater than 0 when sequence is greater than 1");
+        cuopt_assert(node_stack.min_p_score < p_scores[request_id->info.node()],
+                     "P score should be smaller than requests ");
+      }
+      release_lock(solution.lock);
+    }
   }
 }
 
@@ -712,6 +713,7 @@ bool guided_ejection_search_t<i_t, f_t, REQUEST>::run_lexicographic_search(
   global_min_p_.set_value_async(max, stream);
   solution_ptr->d_lock.set_value_async(zero, stream);
   global_random_counter_.set_value_async(zero, stream);
+  CUOPT_KERNEL_TRACE("lexicographic_search", "blocks=%d TPB=%d", n_blocks_lexico, threads_per_block_lexico);
   lexicographic_search<i_t, f_t>
     <<<n_blocks_lexico, threads_per_block_lexico, sh_size, stream>>>(solution_ptr->view(),
                                                                      k_max,
@@ -720,8 +722,8 @@ bool guided_ejection_search_t<i_t, f_t, REQUEST>::run_lexicographic_search(
                                                                      global_min_p_.data(),
                                                                      global_sequence_.data(),
                                                                      global_random_counter_.data());
-  solution_ptr->sol_handle->sync_stream();
   RAFT_CHECK_CUDA(stream);
+  CUOPT_KERNEL_SYNC_CHECK("lexicographic_search", stream);
   // If global_min_p_ != max do the move
   if (global_min_p_.value(stream) != max) {
     // cuopt_assert(compare_lexico_results(*this, solution, request_id, EP, k_max), "");
@@ -730,6 +732,7 @@ bool guided_ejection_search_t<i_t, f_t, REQUEST>::run_lexicographic_search(
     if (!set_shmem_of_kernel(execute_lexico_move<i_t, f_t, REQUEST>, shared_for_tmp_route)) {
       return false;
     }
+    CUOPT_KERNEL_TRACE("execute_lexico_move", "TPB=%d", threads_per_block_lexico);
     execute_lexico_move<i_t, f_t, REQUEST>
       <<<1, threads_per_block_lexico, shared_for_tmp_route, stream>>>(solution_ptr->view(),
                                                                       request_id,
@@ -738,6 +741,7 @@ bool guided_ejection_search_t<i_t, f_t, REQUEST>::run_lexicographic_search(
                                                                       EP.view(),
                                                                       p_scores_.data());
     RAFT_CHECK_CUDA(stream);
+    CUOPT_KERNEL_SYNC_CHECK("execute_lexico_move", stream);
     i_t removed_size = global_sequence_.element(1, stream);
     if constexpr (REQUEST == request_t::PDP) { removed_size = (removed_size - 1) / 2; }
     EP.index_ += removed_size;

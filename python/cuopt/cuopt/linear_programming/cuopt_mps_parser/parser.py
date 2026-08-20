@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
-from cuopt_mps_parser import parser_wrapper
-from cuopt_mps_parser.utilities import catch_mps_parser_exception
+from . import parser_wrapper
+from .utilities import catch_mps_parser_exception
 
 
 @catch_mps_parser_exception

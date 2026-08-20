@@ -577,6 +577,13 @@ struct detect_infeas_t {
     if (off_beg == off_end) { return 0; }
     auto eps = get_cstr_tolerance<i_t, f_t>(
       cnst_lb, cnst_ub, tolerances.absolute_tolerance, tolerances.relative_tolerance);
+    // Guard against false infeasibility from floating-point rounding in GPU
+    // activity sums (BlockReduce tree ordering differs across architectures).
+    // cnst_slack.x = cnst_ub - min_activity, cnst_slack.y = cnst_lb - max_activity
+    f_t min_a   = cnst_ub - cnst_slack.x;
+    f_t max_a   = cnst_lb - cnst_slack.y;
+    f_t act_mag = max(raft::abs(min_a), raft::abs(max_a));
+    if (isfinite(act_mag)) { eps = max(eps, act_mag * f_t(1e-10)); }
     // The return statement is equivalent to
     //  return (min_a > cnst_ub + eps) || (max_a < cnst_lb - eps);
     return (0 > cnst_slack.x + eps) || (eps < cnst_slack.y);

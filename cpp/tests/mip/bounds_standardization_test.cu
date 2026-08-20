@@ -103,8 +103,12 @@ void test_bounds_standardization_test(std::string test_instance)
   EXPECT_NEAR(result_1.get_objective_value(), result_2.get_objective_value(), 1e-2f);
 }
 
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST(mip_solve, bounds_standardization_test)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   std::vector<std::string> test_instances = {
     "mip/50v-10-free-bound.mps", "mip/neos5-free-bound.mps", "mip/neos5.mps"};
   for (const auto& test_instance : test_instances) {

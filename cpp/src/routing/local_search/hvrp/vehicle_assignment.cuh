@@ -81,7 +81,11 @@ struct vehicle_assignment_t {
     constexpr void pop_next_vehicle_id(i_t route_id, i_t bucket, i_t& vehicle_id)
     {
       if (threadIdx.x == 0) {
-        acquire_lock(gl_lock);
+        while (!acquire_lock(gl_lock)) {
+#if defined(__HIP_PLATFORM_AMD__)
+          __builtin_amdgcn_s_sleep(8);
+#endif
+        }
         auto n_available = vehicle_availability[bucket];
         cuopt_assert(n_available > 0, "Infeasible use of buckets");
         auto bucket_offset = bucket_offsets[bucket];

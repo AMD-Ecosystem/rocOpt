@@ -69,22 +69,34 @@ TEST(termination_status, presolve_infeasible_test)
   EXPECT_EQ(termination_status, mip_termination_status_t::Infeasible);
 }
 
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST(termination_status, feasible_found_test)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   auto [termination_status, obj_val, lb] =
     test_mps_file("mip/gen-ip054.mps", default_time_limit, default_heuristics_only);
   EXPECT_EQ(termination_status, mip_termination_status_t::FeasibleFound);
 }
 
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST(termination_status, timeout_test)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   auto [termination_status, obj_val, lb] =
     test_mps_file("mip/stein9inf.mps", default_time_limit, default_heuristics_only);
   EXPECT_EQ(termination_status, mip_termination_status_t::TimeLimit);
 }
 
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST(termination_status, optimality_test)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   auto [termination_status, obj_val, lb] =
     test_mps_file("mip/bb_optimality.mps", default_time_limit, false);
   EXPECT_EQ(termination_status, mip_termination_status_t::Optimal);
@@ -92,16 +104,24 @@ TEST(termination_status, optimality_test)
 }
 
 // Ensure the lower bound on maximization problems when BB times out has the right sign
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST(termination_status, lower_bound_bb_timeout)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   auto [termination_status, obj_val, lb] = test_mps_file("mip/cod105_max.mps", 5.0, false);
   EXPECT_EQ(termination_status, mip_termination_status_t::FeasibleFound);
   EXPECT_GE(obj_val, 6);
   EXPECT_GE(lb, obj_val);
 }
 
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST(termination_status, crossing_bounds_infeasible)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   auto [termination_status, obj_val, lb] = test_mps_file("mip/crossing_var_bounds.mps", 0.5, false);
   EXPECT_EQ(termination_status, mip_termination_status_t::Infeasible);
 }
@@ -118,8 +138,12 @@ TEST(termination_status, gf2_presolve_infeasible)
   EXPECT_EQ(termination_status, mip_termination_status_t::Infeasible);
 }
 
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST(termination_status, bb_infeasible_test)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   // First, check that presolve doesn't reduce the problem to infeasibility
   {
     auto [termination_status, obj_val, lb] = test_mps_file("mip/stein9inf.mps", 1, true);

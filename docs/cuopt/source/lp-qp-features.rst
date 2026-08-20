@@ -34,7 +34,7 @@ Lower and upper bounds can be applied to each variable. If no variable bounds ar
 Constraints
 -----------
 
-The constraint matrix is specified in `Compressed Sparse Row (CSR) format  <https://docs.nvidia.com/cuda/cusparse/#compressed-sparse-row-csr>`_.
+The constraint matrix is specified in `Compressed Sparse Row (CSR) format <https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)>`_.
 
 There are two ways to specify constraints to the LP solver:
 

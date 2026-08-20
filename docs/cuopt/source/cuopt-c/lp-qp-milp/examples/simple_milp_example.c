@@ -58,7 +58,7 @@ cuopt_int_t test_simple_milp()
   cuopt_int_t nnz = 4;
 
   // CSR format constraint matrix
-  // https://docs.nvidia.com/nvpl/latest/sparse/storage_format/sparse_matrix.html#compressed-sparse-row-csr
+  // https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
   // From the constraints:
   // 3.0*x1 + 4.0*x2 <= 5.4
   // 2.7*x1 + 10.1*x2 <= 4.9

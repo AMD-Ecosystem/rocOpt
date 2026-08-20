@@ -11,6 +11,7 @@ from cuopt.linear_programming.solver.solver_parameters import (
 )
 
 
+@pytest.mark.skip(reason="QP auto-selects Barrier which requires cuDSS (NVIDIA GPU only)")
 def test_solver():
     data_model_obj = data_model.DataModel()
 

@@ -196,8 +196,15 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   *dual_step_size   = step_size_ * primal_weight_;
 
   *step_size_strategy_view.step_size = step_size_;
-  cuopt_assert(!isnan(step_size_), "step size can't be nan");
-  cuopt_assert(!isinf(step_size_), "step size can't be inf");
+
+  // If step_size degenerates to NaN or Inf (e.g. due to numerical divergence
+  // on certain GPU architectures), signal a numerical error instead of
+  // crashing via assert.  The caller checks valid_step_size == -1 and returns
+  // pdlp_termination_status_t::NumericalError gracefully.
+  if (isnan(step_size_) || isinf(step_size_)) {
+    *step_size_strategy_view.valid_step_size = -1;
+    return;
+  }
 }
 
 template <typename i_t, typename f_t>

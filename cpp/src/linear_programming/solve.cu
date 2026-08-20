@@ -709,13 +709,19 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
                                    std::ref(timer));
     };
 
-    if (settings.num_gpus > 1) {
-      problem.handle_ptr->sync_stream();
-      raft::device_setter device_setter(1);  // Scoped variable
-      CUOPT_LOG_DEBUG("Barrier device: %d", device_setter.get_current_device());
-      call_barrier_thread();
-    } else {
-      call_barrier_thread();
+    try {
+      if (settings.num_gpus > 1) {
+        problem.handle_ptr->sync_stream();
+        raft::device_setter device_setter(1);  // Scoped variable
+        CUOPT_LOG_DEBUG("Barrier device: %d", device_setter.get_current_device());
+        call_barrier_thread();
+      } else {
+        call_barrier_thread();
+      }
+    } catch (const std::exception& e) {
+      CUOPT_LOG_WARN("Barrier thread failed: %s. Concurrent solve continues with PDLP/Simplex.", e.what());
+    } catch (...) {
+      CUOPT_LOG_WARN("Barrier thread failed with unknown error. Concurrent solve continues with PDLP/Simplex.");
     }
   });
 
@@ -743,14 +749,18 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
       : optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::ConcurrentLimit,
                                                   problem.handle_ptr->get_stream()};
 
-  // copy the barrier solution to the device
-  auto sol_barrier = convert_dual_simplex_sol(problem,
-                                              std::get<0>(*sol_barrier_ptr),
-                                              std::get<1>(*sol_barrier_ptr),
-                                              std::get<2>(*sol_barrier_ptr),
-                                              std::get<3>(*sol_barrier_ptr),
-                                              std::get<4>(*sol_barrier_ptr),
-                                              1);
+  // copy the barrier solution to the device (barrier may have failed, e.g. no cuDSS on ROCm)
+  auto sol_barrier =
+    sol_barrier_ptr
+      ? convert_dual_simplex_sol(problem,
+                                 std::get<0>(*sol_barrier_ptr),
+                                 std::get<1>(*sol_barrier_ptr),
+                                 std::get<2>(*sol_barrier_ptr),
+                                 std::get<3>(*sol_barrier_ptr),
+                                 std::get<4>(*sol_barrier_ptr),
+                                 1)
+      : optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
+                                                  problem.handle_ptr->get_stream()};
 
   f_t end_time = timer.elapsed_time();
   CUOPT_LOG_INFO(
@@ -955,6 +965,20 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
     CUOPT_LOG_ERROR("Error in solve_lp: %s", e.what());
     return optimization_problem_solution_t<i_t, f_t>{
       cuopt::logic_error("Memory allocation failed", cuopt::error_type_t::RuntimeError),
+      op_problem.get_handle_ptr()->get_stream()};
+  } catch (const std::exception& e) {
+    CUOPT_LOG_ERROR("Error in solve_lp (std::exception): %s", e.what());
+    return optimization_problem_solution_t<i_t, f_t>{
+      cuopt::logic_error(
+        std::string("{\"CUOPT_ERROR_TYPE\": \"RuntimeError\", \"msg\": \"") + e.what() + "\"}",
+        cuopt::error_type_t::RuntimeError),
+      op_problem.get_handle_ptr()->get_stream()};
+  } catch (...) {
+    CUOPT_LOG_ERROR("Unknown error in solve_lp");
+    return optimization_problem_solution_t<i_t, f_t>{
+      cuopt::logic_error(
+        "{\"CUOPT_ERROR_TYPE\": \"RuntimeError\", \"msg\": \"Unknown internal error in LP solver\"}",
+        cuopt::error_type_t::RuntimeError),
       op_problem.get_handle_ptr()->get_stream()};
   }
 }

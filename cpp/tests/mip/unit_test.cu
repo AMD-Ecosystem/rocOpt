@@ -228,8 +228,12 @@ class MILPTestParams
   : public testing::TestWithParam<
       std::tuple<bool, bool, bool, cuopt::linear_programming::mip_termination_status_t>> {};
 
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST_P(MILPTestParams, TestSampleMILP)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   bool maximize                    = std::get<0>(GetParam());
   bool scaling                     = std::get<1>(GetParam());
   bool heuristics_only             = std::get<2>(GetParam());

@@ -286,7 +286,7 @@ The response would be as follows:
     Variables Values:
     {'VAR1': 1.8, 'VAR2': 0.0}
 
-Example with DataModel is available in the `Examples Notebooks Repository <https://github.com/NVIDIA/cuopt-examples>`_.
+.. TODO(rocopt): link to a DataModel example in the rocOpt examples repository when available
 
 The ``data`` argument to ``get_LP_solve`` may be a dictionary of the format shown in :doc:`LP Open-API spec <../../open-api>`. More details on the response can be found under the responses schema :doc:`"get /cuopt/request" and "get /cuopt/solution" API spec <../../open-api>`.
 

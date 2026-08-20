@@ -72,27 +72,26 @@ class vrp_move_candidates_t {
     {
       // we want to store the best per node, to retry the moves on changed routes
       if (cost_delta_ < best_cost_delta_per_node[node_id_1_]) {
-        acquire_lock(&locks_per_node[node_id_1_]);
-        if (cost_delta_ < best_cost_delta_per_node[node_id_1_]) {
-          best_id_per_node[node_id_1_]         = node_id_2_;
-          best_cost_delta_per_node[node_id_1_] = cost_delta_;
-        }
-        release_lock(&locks_per_node[node_id_1_]);
+        with_lock(&locks_per_node[node_id_1_], [&]() {
+          if (cost_delta_ < best_cost_delta_per_node[node_id_1_]) {
+            best_id_per_node[node_id_1_]         = node_id_2_;
+            best_cost_delta_per_node[node_id_1_] = cost_delta_;
+          }
+        });
       }
-      // atomicExch(&active_nodes_impacted[node_id_1_], 1);
 
       if (cost_delta_ > cost_delta[route_pair_idx]) return;
-      acquire_lock(&locks_per_route_pair[route_pair_idx]);
-      if (cost_delta_ < cost_delta[route_pair_idx]) {
-        node_id_1[route_pair_idx]     = node_id_1_;
-        node_id_2[route_pair_idx]     = node_id_2_;
-        frag_size_1[route_pair_idx]   = frag_size_1_;
-        frag_size_2[route_pair_idx]   = frag_size_2_;
-        move_type[route_pair_idx]     = move_type_;
-        insert_offset[route_pair_idx] = insert_offset_;
-        cost_delta[route_pair_idx]    = cost_delta_;
-      }
-      release_lock(&locks_per_route_pair[route_pair_idx]);
+      with_lock(&locks_per_route_pair[route_pair_idx], [&]() {
+        if (cost_delta_ < cost_delta[route_pair_idx]) {
+          node_id_1[route_pair_idx]     = node_id_1_;
+          node_id_2[route_pair_idx]     = node_id_2_;
+          frag_size_1[route_pair_idx]   = frag_size_1_;
+          frag_size_2[route_pair_idx]   = frag_size_2_;
+          move_type[route_pair_idx]     = move_type_;
+          insert_offset[route_pair_idx] = insert_offset_;
+          cost_delta[route_pair_idx]    = cost_delta_;
+        }
+      });
     }
 
     DI i_t get_route_pair_idx(i_t r_1, i_t r_2, i_t n_routes)

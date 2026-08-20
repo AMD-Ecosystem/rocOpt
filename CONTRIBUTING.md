@@ -1,13 +1,13 @@
-# Contributing to cuOpt
+# Contributing to rocOpt
 
-Contributions to NVIDIA cuOpt fall into the following categories:
+Contributions to rocOpt fall into the following categories:
 
 1. To report a bug, request a new feature, or report a problem with documentation, please file an
-   [issue](https://github.com/NVIDIA/cuopt/issues/new/choose) describing the problem or new feature
-   in detail. The NVIDIA cuOpt team evaluates and triages issues, and schedules them for a release. If you
+   [issue](https://github.com/AMD-AIOSS/rocopt/issues/new/choose) describing the problem or new feature
+   in detail. The rocOpt team evaluates and triages issues, and schedules them for a release. If you
    believe the issue needs priority attention, please comment on the issue to notify the team.
 2. To propose and implement a new feature, please file a new feature request
-   [issue](https://github.com/NVIDIA/cuopt/issues/new/choose). Describe the intended feature and
+   [issue](https://github.com/AMD-AIOSS/rocopt/issues/new/choose). Describe the intended feature and
    discuss the design and implementation with the team and community. Once the team agrees that the
    plan looks good, go ahead and implement it, using the [code contributions](#code-contributions)
    guide below.
@@ -20,7 +20,7 @@ Contributions to NVIDIA cuOpt fall into the following categories:
 
 ### Branching Strategy
 
-Starting with RAPIDS v25.12, cuOpt follows the new RAPIDS branching strategy. The `main` branch represents the latest development state and is the default target for all pull requests during the development phase. During release preparation, a release branch (`release/YY.MM`) is created from `main` and serves as the release branch.
+Starting with RAPIDS v25.12, rocOpt follows the new RAPIDS branching strategy. The `main` branch represents the latest development state and is the default target for all pull requests during the development phase. During release preparation, a release branch (`release/YY.MM`) is created from `main` and serves as the release branch.
 
 Key points:
 - **Default branch**: Always `main` (latest and greatest)
@@ -35,7 +35,7 @@ For more details, see the [RAPIDS Branching Strategy Notice (RSN 47)](https://do
 
 ### Release Timeline
 
-cuOpt follows the RAPIDS release schedule and is part of the **"others"** category in the release timeline. The release cycle consists of:
+rocOpt follows the RAPIDS release schedule and is part of the **"others"** category in the release timeline. The release cycle consists of:
 
 - **Development**: Active feature development and bug fixes targeting `main`
 - **Burn Down**: Focus shifts to stabilization; new features should target the next release
@@ -49,21 +49,21 @@ For current release timelines and dates, refer to the [RAPIDS Maintainers Docs](
 1. Follow the guide at the bottom of this page for
    [Setting up your build environment](#setting-up-your-build-environment).
 2. Find an issue to work on. The best way is to look for the
-   [good first issue](https://github.com/NVIDIA/cuopt/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-   or [help wanted](https://github.com/NVIDIA/cuopt/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+   [good first issue](https://github.com/AMD-AIOSS/rocopt/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+   or [help wanted](https://github.com/AMD-AIOSS/rocopt/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
    labels.
 3. Comment on the issue stating that you are going to work on it.
-4. Create a fork of the cuopt repository and check out a branch with a name that
+4. Create a fork of the rocopt repository and check out a branch with a name that
    describes your planned work. For example, `fix-documentation`.
 5. Write code to address the issue or implement the feature.
 6. Add unit tests. Please refer to `cpp/src/tests` for examples of unit tests on C and C++ using gtest and `python/cuopt/cuopt/tests` for examples of unit tests on Python using pytest.
-7. [Create your pull request](https://github.com/NVIDIA/cuopt/compare). To run continuous integration (CI) tests without requesting review, open a draft pull request.
-8. Check if CI is running, if not please request one of the NVIDIA cuOpt developers to trigger it. This might happen in case you have non-verified (non-sign-off) commits or don't have enough permissions to trigger CI.
+7. [Create your pull request](https://github.com/AMD-AIOSS/rocopt/compare). To run continuous integration (CI) tests without requesting review, open a draft pull request.
+8. Check if CI is running, if not please request one of the rocOpt developers to trigger it. This might happen in case you have non-verified (non-sign-off) commits or don't have enough permissions to trigger CI.
 9. Verify that CI passes all [status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks).
    Fix if needed.
 10. Github will automatically assign a reviewer to your pull request. Please wait for the reviewer to review your code. If the reviewer has any comments, address them in the pull request.
 11. If your PR is not getting reviewed, please ping the reviewers in the PR.
-12. Once reviewed and approved, a NVIDIA cuOpt developer will merge your pull request.
+12. Once reviewed and approved, a rocOpt developer will merge your pull request.
 
 
 Remember, if you are unsure about anything, don't hesitate to comment on issues
@@ -72,10 +72,10 @@ and ask for clarifications! Please use the Github issues for any questions or fo
 ### Seasoned developers
 
 Once you have gotten your feet wet and are more comfortable with the code, you
-can look at the prioritized issues of our next release in our [project boards](https://github.com/NVIDIA/cuopt/projects).
+can look at the prioritized issues of our next release in our [project boards](https://github.com/AMD-AIOSS/rocopt/projects).
 
 > **Pro Tip:** Always look at the release board with the highest number for
-issues to work on. This is where NVIDIA cuOpt developers also focus their efforts.
+issues to work on. This is where rocOpt developers also focus their efforts.
 
 Look at the unassigned issues, and find an issue you are comfortable with
 contributing to. Start with _Step 3_ from above, commenting on the issue to let
@@ -84,20 +84,17 @@ implementation of the issue, ask them in the issue instead of the PR.
 
 ## Setting up your build environment
 
-The following instructions are for developers and contributors to NVIDIA cuOpt development. These
-instructions are tested on Ubuntu Linux LTS releases. Use these instructions to build NVIDIA cuOpt from
+The following instructions are for developers and contributors to rocOpt development. These
+instructions are tested on Ubuntu Linux LTS releases. Use these instructions to build rocOpt from
 source and contribute to its development. Other operating systems may be compatible, but are not
 currently tested.
 
-Building NVIDIA cuOpt with the provided conda environment is recommended for users who wish to enable all
+Building rocOpt with the provided conda environment is recommended for users who wish to enable all
 library features. The following instructions are for building with a conda environment.
 
 ### General requirements
 
-CUDA/GPU Runtime:
-
-* CUDA 12.0 or higher
-* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/) >=7.0)
+<!-- TODO(rocopt-distribution): document the GPU runtime / driver / architecture requirements for rocOpt -->
 
 Python:
 
@@ -112,19 +109,19 @@ Architecture:
 * x86_64 (64-bit)
 * aarch64 (64-bit)
 
-### Build NVIDIA cuOpt from source
+### Build rocOpt from source
 
 - Clone the repository:
 
 ```bash
-CUOPT_HOME=$(pwd)/cuopt
-git clone https://github.com/NVIDIA/cuopt.git $CUOPT_HOME
+CUOPT_HOME=$(pwd)/rocopt
+git clone https://github.com/AMD-AIOSS/rocopt.git $CUOPT_HOME
 cd $CUOPT_HOME
 ```
 
 #### Building with a conda environment
 
-**Note:** Building from source without conda is very difficult. We highly recommend that users build cuOpt inside a conda environment
+**Note:** Building from source without conda is very difficult. We highly recommend that users build rocOpt inside a conda environment
 
 - Create the conda development environment:
 
@@ -134,7 +131,7 @@ Please install conda if you don't have it already. You can install [miniforge](h
 
 ```bash
 # create the conda environment (assuming in base `cuopt` directory)
-# note: cuOpt currently doesn't support `channel_priority: strict`;
+# note: rocOpt currently doesn't support `channel_priority: strict`;
 # use `channel_priority: flexible` instead
 conda env create --name cuopt_dev --file conda/environments/all_cuda-131_arch-$(uname -m).yaml
 # activate the environment
@@ -169,7 +166,7 @@ cd $CUOPT_HOME
 ./build.sh --help
 ```
 
-**Note**: when building the Python components, Python will by default look in ~/.local/lib/pythonX.Y/site-packages for any dependencies before looking in the site-packages directory in the conda environment. If you have cuOpt direct or indirect dependencies installed under ~/.local/lib, these may conflict with packages in the conda environment and cause build errors. If you have persistent build errors that do not seem to be related to local code changes, check the contents of ~/.local/lib. To work around this issue you can set the environment variable PYTHONNOUSERSITE=1 which will skip ~/.local/lib, or remove select packages from ~/.local/lib if they are not needed, or modify your $PYTHONPATH to look at the conda env first.
+**Note**: when building the Python components, Python will by default look in ~/.local/lib/pythonX.Y/site-packages for any dependencies before looking in the site-packages directory in the conda environment. If you have rocOpt direct or indirect dependencies installed under ~/.local/lib, these may conflict with packages in the conda environment and cause build errors. If you have persistent build errors that do not seem to be related to local code changes, check the contents of ~/.local/lib. To work around this issue you can set the environment variable PYTHONNOUSERSITE=1 which will skip ~/.local/lib, or remove select packages from ~/.local/lib if they are not needed, or modify your $PYTHONPATH to look at the conda env first.
 
 #### Deb package
 
@@ -212,7 +209,7 @@ export RAPIDS_DATASET_ROOT_DIR=$CUOPT_HOME/datasets/
 cd $CUOPT_HOME/python
 pytest -v ${CUOPT_HOME}/python/cuopt/cuopt/tests
 ```
-## Debugging cuOpt
+## Debugging rocOpt
 
 ### Building in debug mode from source
 
@@ -271,7 +268,7 @@ Please don't try to add dependencies directly to environment.yaml files under `c
 
 ### Using pre-commit hooks
 
-cuOpt uses [pre-commit](https://pre-commit.com/) to execute all code linters and formatters. These
+rocOpt uses [pre-commit](https://pre-commit.com/) to execute all code linters and formatters. These
 tools ensure a consistent code format throughout the project. Using pre-commit ensures that linter
 versions and options are aligned for all developers. Additionally, there is a CI check in place to
 enforce that committed code follows our standards.

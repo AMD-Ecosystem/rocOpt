@@ -6,7 +6,9 @@ This section contains examples of how to use the cuOpt linear programming, quadr
 
 .. note::
 
-    The examples in this section are not exhaustive. They are provided to help you get started with the cuOpt linear programming, quadratic programming and mixed integer linear programming Python API. For more examples, please refer to the `cuopt-examples GitHub repository <https://github.com/NVIDIA/cuopt-examples>`_.
+    The examples in this section are not exhaustive. They are provided to help you get started with the cuOpt linear programming, quadratic programming and mixed integer linear programming Python API.
+
+.. TODO(rocopt): link to additional examples in the rocOpt examples repository when available
 
 
 Simple Linear Programming Example

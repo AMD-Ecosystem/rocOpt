@@ -23,6 +23,7 @@ if RAPIDS_DATASET_ROOT_DIR is None:
     RAPIDS_DATASET_ROOT_DIR = os.path.join(RAPIDS_DATASET_ROOT_DIR, "datasets")
 
 
+@pytest.mark.skip(reason="MIP B&B uses Barrier which requires cuDSS (not available on ROCm)")
 @pytest.mark.parametrize(
     "file_name",
     [

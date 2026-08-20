@@ -7,9 +7,8 @@
 /* clang-format on */
 
 #include <utilities/vector_helpers.cuh>
+#include <routing/utilities/constants.hpp>
 #include "../solution/solution.cuh"
-
-#include <utilities/vector_helpers.cuh>
 
 #include <thrust/logical.h>
 #include <functional>
@@ -261,7 +260,7 @@ bool global_runtime_checks_(solution_t<i_t, f_t, REQUEST>& solution,
 
   const bool depot_included = solution.problem_ptr->order_info.depot_included_;
   check_histogram<i_t, f_t, REQUEST>
-    <<<(solution.get_num_depot_excluded_orders() + 32 - 1) / 32, 32, 0, stream>>>(
+    <<<(solution.get_num_depot_excluded_orders() + warp_size - 1) / warp_size, warp_size, 0, stream>>>(
       solution.runtime_check_histo.data(),
       solution.get_num_orders(),
       all_nodes_should_be_served,
@@ -269,7 +268,7 @@ bool global_runtime_checks_(solution_t<i_t, f_t, REQUEST>& solution,
 
   if (solution.problem_ptr->get_max_break_dimensions() > 0) {
     auto sh_size = solution.problem_ptr->get_max_break_dimensions() * sizeof(i_t);
-    check_breaks<i_t, f_t, REQUEST><<<solution.get_n_routes(), 32, sh_size, stream>>>(
+    check_breaks<i_t, f_t, REQUEST><<<solution.get_n_routes(), warp_size, sh_size, stream>>>(
       solution.view(), all_nodes_should_be_served);
   }
 

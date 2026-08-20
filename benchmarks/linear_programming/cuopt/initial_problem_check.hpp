@@ -5,12 +5,17 @@
  */
 /* clang-format on */
 
+#include <cmath>
+
 template <typename f_t>
 double combine_finite_abs_bounds(f_t lower, f_t upper)
 {
   f_t val = f_t(0);
-  if (isfinite(upper)) { val = raft::max<f_t>(val, raft::abs(upper)); }
-  if (isfinite(lower)) { val = raft::max<f_t>(val, raft::abs(lower)); }
+  // std:: qualification is required: on HIP/amdclang++ an unqualified isfinite
+  // resolves to the __device__-only overloads and is not callable from this
+  // __host__ function.
+  if (std::isfinite(upper)) { val = raft::max<f_t>(val, raft::abs(upper)); }
+  if (std::isfinite(lower)) { val = raft::max<f_t>(val, raft::abs(lower)); }
   return val;
 }
 
@@ -76,7 +81,7 @@ bool test_constraint_and_variable_sanity(
   }
   bool feasible_variables = true;
   for (size_t i = 0; i < primal_vars.size(); ++i) {
-    if (variable_types[i] == 'I' && abs(primal_vars[i] - round(primal_vars[i])) > int_tol) {
+    if (variable_types[i] == 'I' && std::abs(primal_vars[i] - std::round(primal_vars[i])) > int_tol) {
       feasible_variables = false;
     }
     // Not always strictly true because we apply variable bound clamping on the scaled problem

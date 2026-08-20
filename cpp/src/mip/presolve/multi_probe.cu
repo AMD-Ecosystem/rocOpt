@@ -49,6 +49,11 @@ struct detect_infeas_redun_t {
     auto cnst_lb   = thrust::get<5>(t);
     f_t eps        = get_cstr_tolerance<i_t, f_t>(
       cnst_lb, cnst_ub, tolerances.absolute_tolerance, tolerances.relative_tolerance);
+    // Guard against false infeasibility from floating-point rounding in GPU
+    // activity sums (BlockReduce tree ordering differs across architectures).
+    f_t act_mag = max(max(raft::abs(min_act_0), raft::abs(max_act_0)),
+                      max(raft::abs(min_act_1), raft::abs(max_act_1)));
+    if (isfinite(act_mag)) { eps = max(eps, act_mag * f_t(1e-10)); }
     auto infeas_0 = (min_act_0 > cnst_ub + eps) || (max_act_0 < cnst_lb - eps);
     auto redund_0 = (min_act_0 > cnst_lb + eps) && (max_act_0 < cnst_ub - eps);
     auto infeas_1 = (min_act_1 > cnst_ub + eps) || (max_act_1 < cnst_lb - eps);

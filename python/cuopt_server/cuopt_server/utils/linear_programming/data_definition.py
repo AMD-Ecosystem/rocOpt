@@ -116,7 +116,7 @@ class CSRConstraintMatrix(StrictModel):
     Indices signify variable with which the coefficients/values are associated.
     And coefficients 3, 4, 2.7, 10.1 become values.
 
-    For more details please refer here <https://docs.nvidia.com/nvpl/_static/sparse/storage_format/sparse_matrix.html#compressed-sparse-row-csr> # noqa
+    For more details on the CSR format see <https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)>
     """
 
     indices: Annotated[List[int], PlainValidator(listint)] = Field(

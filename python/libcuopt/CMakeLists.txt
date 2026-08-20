@@ -5,6 +5,21 @@
 
 cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
 
+# Detect platform before project() call -- project(LANGUAGES CUDA) would fail
+# on ROCm systems that have no nvcc.
+set(USE_ROCM OFF CACHE BOOL "Build with ROCm instead of CUDA")
+
+if(USE_ROCM)
+    message(STATUS "libcuopt-python: ROCm build -- libcuopt.so is already built by the C++ step.")
+    message(STATUS "libcuopt-python: Only installing the Python runtime loader (load.py).")
+
+    # Minimal project; no GPU compiler needed for pure-Python packaging.
+    project(libcuopt-python VERSION 26.4.0 LANGUAGES CXX)
+
+    # Nothing else to do -- scikit-build-core will package the Python files.
+    return()
+endif()
+
 include(../../cmake/rapids_config.cmake)
 include(rapids-cuda)
 rapids_cuda_init_architectures(libcuopt-python)

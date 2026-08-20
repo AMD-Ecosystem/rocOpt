@@ -291,6 +291,20 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     return mip_solution_t<i_t, f_t>{
       cuopt::logic_error("Memory allocation failed", cuopt::error_type_t::RuntimeError),
       op_problem.get_handle_ptr()->get_stream()};
+  } catch (const std::exception& e) {
+    CUOPT_LOG_ERROR("Error in solve_mip (std::exception): %s", e.what());
+    return mip_solution_t<i_t, f_t>{
+      cuopt::logic_error(
+        std::string("{\"CUOPT_ERROR_TYPE\": \"RuntimeError\", \"msg\": \"") + e.what() + "\"}",
+        cuopt::error_type_t::RuntimeError),
+      op_problem.get_handle_ptr()->get_stream()};
+  } catch (...) {
+    CUOPT_LOG_ERROR("Unknown error in solve_mip");
+    return mip_solution_t<i_t, f_t>{
+      cuopt::logic_error(
+        "{\"CUOPT_ERROR_TYPE\": \"RuntimeError\", \"msg\": \"Unknown internal error in MIP solver\"}",
+        cuopt::error_type_t::RuntimeError),
+      op_problem.get_handle_ptr()->get_stream()};
   }
 }
 

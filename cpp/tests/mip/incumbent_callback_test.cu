@@ -121,8 +121,12 @@ void test_incumbent_callback(std::string test_instance)
   check_solutions(get_solution_callback, mps_problem, settings);
 }
 
+// TODO(ROCm): MIP B&B internally calls Barrier which requires cuDSS.
 TEST(mip_solve, incumbent_callback_test)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   std::vector<std::string> test_instances = {
     "mip/50v-10.mps", "mip/neos5-free-bound.mps", "mip/swath1.mps"};
   for (const auto& test_instance : test_instances) {

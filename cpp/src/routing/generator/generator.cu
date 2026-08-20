@@ -434,7 +434,9 @@ vehicle_time_window_t<i_t> generate_vehicle_time_windows(
                  vehicle_latest.begin() + offset + shift_size,
                  shift_latest);
     shift_earliest = shift_latest;
-    shift_latest += shift_latest;
+    auto next = static_cast<int64_t>(shift_latest) * 2;
+    shift_latest = static_cast<i_t>(
+      std::min(next, static_cast<int64_t>(std::numeric_limits<i_t>::max())));
   }
 
   // Vehicle tw is inclusive of service time so add it to provide more feasible solutions
@@ -444,10 +446,11 @@ vehicle_time_window_t<i_t> generate_vehicle_time_windows(
                     thrust::make_constant_iterator(params.max_service_time),
                     vehicle_latest.begin(),
                     [] __device__(i_t vehicle_time, i_t service_time) {
-                      auto vehicle_latest = vehicle_time + service_time;
-                      if (vehicle_latest > std::numeric_limits<i_t>::max())
+                      auto sum =
+                        static_cast<int64_t>(vehicle_time) + static_cast<int64_t>(service_time);
+                      if (sum > static_cast<int64_t>(std::numeric_limits<i_t>::max()))
                         return std::numeric_limits<i_t>::max();
-                      return static_cast<i_t>(vehicle_latest);
+                      return static_cast<i_t>(sum);
                     });
   return std::make_tuple(std::move(vehicle_earliest), std::move(vehicle_latest));
 }

@@ -72,23 +72,31 @@ std::unique_ptr<vehicle_routing_ret_t> call_solve(
   routing::solver_settings_t<int, float>* settings)
 
 {
-  auto routing_solution = cuopt::routing::solve(*data_model, *settings);
-  vehicle_routing_ret_t vr_ret{
-    routing_solution.get_vehicle_count(),
-    routing_solution.get_total_objective(),
-    routing_solution.get_objectives(),
-    std::make_unique<rmm::device_buffer>(routing_solution.get_route().release()),
-    std::make_unique<rmm::device_buffer>(routing_solution.get_order_locations().release()),
-    std::make_unique<rmm::device_buffer>(routing_solution.get_arrival_stamp().release()),
-    std::make_unique<rmm::device_buffer>(routing_solution.get_truck_id().release()),
-    std::make_unique<rmm::device_buffer>(routing_solution.get_node_types().release()),
-    std::make_unique<rmm::device_buffer>(routing_solution.get_unserviced_nodes().release()),
-    std::make_unique<rmm::device_buffer>(routing_solution.get_accepted().release()),
-    routing_solution.get_status(),
-    routing_solution.get_status_string(),
-    routing_solution.get_error_status().get_error_type(),
-    routing_solution.get_error_status().what()};
-  return std::make_unique<vehicle_routing_ret_t>(std::move(vr_ret));
+  try {
+    auto routing_solution = cuopt::routing::solve(*data_model, *settings);
+    vehicle_routing_ret_t vr_ret{
+      routing_solution.get_vehicle_count(),
+      routing_solution.get_total_objective(),
+      routing_solution.get_objectives(),
+      std::make_unique<rmm::device_buffer>(routing_solution.get_route().release()),
+      std::make_unique<rmm::device_buffer>(routing_solution.get_order_locations().release()),
+      std::make_unique<rmm::device_buffer>(routing_solution.get_arrival_stamp().release()),
+      std::make_unique<rmm::device_buffer>(routing_solution.get_truck_id().release()),
+      std::make_unique<rmm::device_buffer>(routing_solution.get_node_types().release()),
+      std::make_unique<rmm::device_buffer>(routing_solution.get_unserviced_nodes().release()),
+      std::make_unique<rmm::device_buffer>(routing_solution.get_accepted().release()),
+      routing_solution.get_status(),
+      routing_solution.get_status_string(),
+      routing_solution.get_error_status().get_error_type(),
+      routing_solution.get_error_status().what()};
+    return std::make_unique<vehicle_routing_ret_t>(std::move(vr_ret));
+  } catch (const std::exception& e) {
+    throw std::runtime_error(
+      std::string("{\"CUOPT_ERROR_TYPE\": \"RuntimeError\", \"msg\": \"") + e.what() + "\"}");
+  } catch (...) {
+    throw std::runtime_error(
+      "{\"CUOPT_ERROR_TYPE\": \"RuntimeError\", \"msg\": \"Unknown internal error in routing solver\"}");
+  }
 }
 
 /**

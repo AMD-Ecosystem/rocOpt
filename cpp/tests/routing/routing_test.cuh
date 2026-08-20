@@ -1013,6 +1013,14 @@ class regression_routing_test_t : public routing_test_t<i_t, f_t>,
     this->ref_cost         = param.ref_cost;
     this->ref_vn           = param.ref_vn;
     this->regression_check = true;
+
+    {
+      std::ifstream probe(param.routing_file);
+      if (!probe.is_open()) {
+        GTEST_SKIP() << "Dataset file not found: " << param.routing_file;
+      }
+    }
+
     auto input             = load_routing_file<i_t, f_t>(param.routing_file, this->limit_);
 
     this->n_locations        = input.n_locations;

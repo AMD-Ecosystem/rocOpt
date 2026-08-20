@@ -249,11 +249,17 @@ DI void mark_impacted_nodes(const typename route_t<i_t, f_t, REQUEST>::view_t& r
 
 template <typename i_t, typename f_t, request_t REQUEST>
 __global__ void execute_sliding_moves_tsp(
-  typename solution_t<i_t, f_t, REQUEST>::view_t sol,
-  typename move_candidates_t<i_t, f_t>::view_t move_candidates,
+  const typename solution_t<i_t, f_t, REQUEST>::view_t* __restrict__ sol_ptr,
+  const typename move_candidates_t<i_t, f_t>::view_t* __restrict__ mc_ptr,
   raft::device_span<sliding_tsp_cand_t<i_t>> sampled_nodes_data,
   raft::device_span<i_t> moved_regions)
 {
+  // Load views from device memory instead of the kernarg segment.
+  // The two view structs together exceed ~1 KB, which triggers a
+  // kernarg packing regression in ROCm 7.2 / Clang 22 on gfx942.
+  auto sol             = *sol_ptr;
+  auto move_candidates = *mc_ptr;
+
   extern __shared__ double shmem[];
   auto route_id = blockIdx.x;
 
@@ -551,10 +557,19 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_sliding_tsp(
                  return cand1.selection_delta < cand2.selection_delta;
                });
 
+  using sol_view_t = typename solution_t<i_t, f_t, REQUEST>::view_t;
+  using mc_view_t  = typename move_candidates_t<i_t, f_t>::view_t;
+  rmm::device_scalar<sol_view_t> d_sol_view(sol.sol_handle->get_stream());
+  rmm::device_scalar<mc_view_t>  d_mc_view(sol.sol_handle->get_stream());
+  auto sol_v = sol.view();
+  auto mc_v  = move_candidates.view();
+  d_sol_view.set_value_async(sol_v, sol.sol_handle->get_stream());
+  d_mc_view.set_value_async(mc_v, sol.sol_handle->get_stream());
+
   execute_sliding_moves_tsp<i_t, f_t, REQUEST>
     <<<sol.get_n_routes(), n_threads, sh_size, sol.sol_handle->get_stream()>>>(
-      sol.view(),
-      move_candidates.view(),
+      d_sol_view.data(),
+      d_mc_view.data(),
       cuopt::make_span(sampled_tsp_data_),
       cuopt::make_span(moved_regions_));
   RAFT_CHECK_CUDA(sol.sol_handle->get_stream());

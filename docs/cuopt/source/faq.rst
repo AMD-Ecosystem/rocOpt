@@ -5,56 +5,20 @@ FAQ
 General FAQ
 ------------------------------
 
-.. dropdown:: Where can I find cuOpt container images?
+.. TODO(rocopt-distribution): document the rocOpt container image and how to obtain it (registry URL, license requirements, pull instructions)
 
-    There are two options:
-    - NVIDIA docker hub (https://hub.docker.com/r/nvidia/)
-    - NVIDIA NGC registry (https://catalog.ngc.nvidia.com/orgs/nvidia/teams/cuopt/containers/cuopt/tags) with NVAIE license.
+.. dropdown:: Do I need a GPU to use rocOpt?
 
-.. dropdown:: How to get a NVAIE license?
+    Yes, please refer to :doc:`system requirements <system-requirements>` for GPU specifications. You can acquire a cloud instance with a supported GPU and launch rocOpt; alternatively, you can launch it in your local machine if it meets the requirements.
 
-    Please refer to `NVIDIA NVAIE <https://www.nvidia.com/en-us/data-center/products/ai-enterprise/>`_ for more information.
+.. dropdown:: Does rocOpt use multiple GPUs/multi-GPUs/multi GPUs?
 
-.. dropdown:: How to access NGC registry?
-
-    Once you have a NVAIE license, you can access the `NGC registry <https://catalog.ngc.nvidia.com/orgs/nvidia/teams/cuopt/containers/cuopt/tags>`_ for cuOpt container images.
-
-.. dropdown:: How to pull cuOpt container images from NGC registry?
-
-    1. Log into NGC using the invite and choose the appropriate NGC org.
-
-    2. Generate an NGC API key from settings. If you have not generated an API Key, you can generate it by going to the Setup option in your profile and choose `Get API Key <https://docs.nvidia.com/ngc/latest/ngc-private-registry-user-guide.html#generating-a-personal-api-key>`_. Store this or generate a new one next time.
-
-    3. Go to the container section for cuOpt and copy the pull tag for the latest image.
-        - Within the Select a tag dropdown, locate the container image release that you want to run.
-        - Click the Copy Image Path button to copy the container image path.
-
-    4. Log into the nvcr.io container registry in your cluster setup, using the NGC API key as shown below.
-
-    .. code-block:: bash
-
-        docker login nvcr.io
-        Username: $oauthtoken
-        Password: <my-api-key>
-
-    5. Pull the cuOpt container image.
-
-    .. code-block:: bash
-
-        docker pull <COPIED_IMAGE_TAG>
-
-.. dropdown:: Do I need a GPU to use cuOpt?
-
-    Yes, please refer to :doc:`system requirements <system-requirements>` for GPU specifications. You can acquire a cloud instance with a supported GPU and launch cuOpt; alternatively, you can launch it in your local machine if it meets the requirements.
-
-.. dropdown:: Does cuOpt use multiple GPUs/multi-GPUs/multi GPUs?
-
-    #. Yes, in cuOpt self-hosted server, a solver process per GPU can be configured to run multiple solvers. Requests are accepted in a round-robin queue. More details are available in :doc:`server api <cuopt-server/server-api/server-cli>`.
+    #. Yes, in rocOpt self-hosted server, a solver process per GPU can be configured to run multiple solvers. Requests are accepted in a round-robin queue. More details are available in :doc:`server api <cuopt-server/server-api/server-cli>`.
     #. There is no support for leveraging multiple GPUs to solve a single problem or oversubscribing a single GPU for multiple solvers.
 
-.. dropdown:: The cuOpt Service is not starting: Issue with port?
+.. dropdown:: The rocOpt Service is not starting: Issue with port?
 
-     1. Check the logs for the container (see cuOpt service monitoring below).
+     1. Check the logs for the container (see rocOpt service monitoring below).
 
        Is port 5000 already in use?
 
@@ -67,7 +31,7 @@ General FAQ
 
      2. Try to locate the process that is using port 5000 and stop it if possible. A tool like ``netstat`` run as the root user can help identify ports mapped to processes, and ``docker ps -a`` will show running containers.
 
-     3. Alternatively, use port mapping to launch cuOpt on a different port such as 5001 (note the omission of ``–network=host`` flag):
+     3. Alternatively, use port mapping to launch rocOpt on a different port such as 5001 (note the omission of ``–network=host`` flag):
 
      4. If running locally, you can also use ``ps -aux | grep cuopt_server`` to find the process and kill it.
 
@@ -75,7 +39,7 @@ General FAQ
 
            docker run -d --rm --gpus all -p 5001:5000 <CUOPT_IMAGE>
 
-.. dropdown:: Why is NVIDIA cuOpt running longer than the supplied time limit?
+.. dropdown:: Why is rocOpt running longer than the supplied time limit?
 
    #. The time limit supplied governs the run time of the solver only, but there are other overheads such as network delay, ETL, validation or the solver being busy with other requests.
 
@@ -83,9 +47,9 @@ General FAQ
 
 .. dropdown:: Why am I getting "libcuopt.so: cannot open shared object file: No such file or directory" error?
 
-   This error indicates that the cuOpt shared library is not found. Please check the following:
+   This error indicates that the rocOpt shared library is not found. Please check the following:
 
-   - The cuOpt is installed
+   - The rocOpt is installed
    - Use ``find / -name libcuopt.so`` to search for the library path from root directory. You might need to run this command as root user.
    - If the library is found, please add it to the ``LD_LIBRARY_PATH`` environment variable as shown below:
 
@@ -93,42 +57,42 @@ General FAQ
 
        export LD_LIBRARY_PATH=/path/to/cuopt/lib:$LD_LIBRARY_PATH
 
-   - If the library is not found, it means it is not yet installed. Please check the cuOpt installation guide for more details.
+   - If the library is not found, it means it is not yet installed. Please check the rocOpt installation guide for more details.
 
-.. dropdown:: Is there a way to make cuOpt also account for other overheads in the same time limit provided?
+.. dropdown:: Is there a way to make rocOpt also account for other overheads in the same time limit provided?
 
    -  We currently don't account for it, since many such overheads are relative and cannot be tracked properly.
 
-.. dropdown:: cuOpt is not running: Issue with GPU memory availability?
+.. dropdown:: rocOpt is not running: Issue with GPU memory availability?
 
     #. If there are errors pertaining to ``rmm`` or errors that the service couldn't acquire GPU memory, there is a possibility that GPU memory is being consumed by another process.
 
     #. This can be observed using the command ``nvidia-smi``.
 
-.. dropdown::  The cuOpt service is not responding: What to check?
+.. dropdown::  The rocOpt service is not responding: What to check?
 
-   1. cuOpt microservice health check on the cuOpt host.
+   1. rocOpt microservice health check on the rocOpt host.
 
-   Perform a health-check locally on the host running cuOpt:
+   Perform a health-check locally on the host running rocOpt:
 
      .. code-block:: bash
 
         curl -s -o /dev/null -w '%{http_code}\\n' localhost:5000/cuopt/health 200
 
 
-    If this command returns 200, cuOpt is running and listening on the specified port.
+    If this command returns 200, rocOpt is running and listening on the specified port.
 
 
     If this command returns something other than 200, check the following:
 
-       -  Check that a cuOpt container is running with ``docker -ps``.
-       -  Examine the cuOpt container log for errors.
-       - Did you include the ``–network=host`` or a ``-p`` port-mapping flag to docker when you launched cuOpt? If you used port mapping, did you perform the health check using the correct port?
-       -  Restart cuOpt and see if that corrects the problem.
+       -  Check that a rocOpt container is running with ``docker -ps``.
+       -  Examine the rocOpt container log for errors.
+       - Did you include the ``–network=host`` or a ``-p`` port-mapping flag to docker when you launched rocOpt? If you used port mapping, did you perform the health check using the correct port?
+       -  Restart rocOpt and see if that corrects the problem.
 
-   2. cuOpt microservice health-check from a remote host.
+   2. rocOpt microservice health-check from a remote host.
 
-   If you are trying to reach cuOpt from a remote host, run the health check from the remote host and specify the IP address of the cuOpt host, for example:
+   If you are trying to reach rocOpt from a remote host, run the health check from the remote host and specify the IP address of the rocOpt host, for example:
 
       .. code-block:: bash
           :linenos:
@@ -136,22 +100,22 @@ General FAQ
            curl -s -o /dev/null -w '%{http_code}\\n' <ip>::5000/cuopt/health
            200
 
-    If this command does not return 200, but a health check locally on the cuOpt host does return 200, the problem is a network configuration or firewall issue. The host is not reachable, or the cuOpt port is not open to incoming traffic.
+    If this command does not return 200, but a health check locally on the rocOpt host does return 200, the problem is a network configuration or firewall issue. The host is not reachable, or the rocOpt port is not open to incoming traffic.
 
 .. dropdown:: Certificate Validation Errors from Python client?
 
-    #. This might happen mostly with cuOpt running in a cloud instance.
+    #. This might happen mostly with rocOpt running in a cloud instance.
 
     #. It could be that you are behind a proxy that is generating a certificate chain and you need additional certificate authorities installed on your machine.
 
     You can examine the certificate chain returned on a connection with the following commands or something similar. If it looks like there are certificates in the chain that are issued by your own organization, contact your local IT admin, and ask them for the proper certificates to install on your machine.
 
-    In this example, we will check the certificate chain being returned from a connection to NVCF at NVIDIA, but you can substitute a different address if you are trying to connect to an instance of cuOpt deployed in the cloud:
+    In this example, we will check the certificate chain being returned from a connection to a remote service, but you can substitute a different address if you are trying to connect to an instance of rocOpt deployed in the cloud:
 
     .. code-block:: bash
         :linenos:
 
-        export MY_SERVER_ADDRESS=”api.nvcf.nvidia.com:443”
+        export MY_SERVER_ADDRESS=”example.com:443”
         openssl s_client -showcerts -connect $MY_SERVER_ADDRESS </dev/null 2>/dev/null | sed -n -e '/BEGIN\ CERTIFICATE/,/END CERTIFICATE/ p' > test.pem
 
         while openssl x509 -noout -text; do :; done < test.pem.txt
@@ -179,7 +143,7 @@ Routing FAQ
             }
         }
 
-    Graphs intended for input into cuOpt are shown in **Compressed Sparse Row (CSR)** format for efficiency. The translation from a more conventional (and human-readable) graph format, such as a weighted edge list, to CSR can be accomplished quickly, as depicted below:
+    Graphs intended for input into rocOpt are shown in **Compressed Sparse Row (CSR)** format for efficiency. The translation from a more conventional (and human-readable) graph format, such as a weighted edge list, to CSR can be accomplished quickly, as depicted below:
 
         .. code-block:: python
             :linenos:
@@ -230,30 +194,30 @@ Routing FAQ
 
 .. dropdown:: How to get partially feasible solutions to infeasible problems?
 
-    Use Prize collection, which associates each task with a prize and the solver will maximize the prize collected. This allows cuOpt to prioritize some tasks over others.
+    Use Prize collection, which associates each task with a prize and the solver will maximize the prize collected. This allows rocOpt to prioritize some tasks over others.
 
 .. dropdown:: What is a dimension mismatch error?
 
     Some of the metrics need to be equal in size; for example, the number of tasks and their demand. If they don't match, it means the problem is partially defined or there is an issue with the data.
 
-.. dropdown:: cuOpt resource estimates; how large a problem can I run with a given set of constraints?
+.. dropdown:: rocOpt resource estimates; how large a problem can I run with a given set of constraints?
 
-    For the standard CVRPTW (Capacitated Vehicle Routing Problem with Time Windows) problem with real-world constraints, cuOpt can easily solve for 15K locations with the NVIDIA GPU A100/H100.
+    For the standard CVRPTW (Capacitated Vehicle Routing Problem with Time Windows) problem with real-world constraints, rocOpt can easily solve for 15K locations on a server-class GPU.
 
 .. dropdown:: Not getting the same solution in every run: Determinism?
 
-    #. cuOpt routing solver is not deterministic, so the results might vary across multiple runs.  Increasing the time limit set for the solver will increase the likelihood of getting identical results across multiple runs.
+    #. rocOpt routing solver is not deterministic, so the results might vary across multiple runs.  Increasing the time limit set for the solver will increase the likelihood of getting identical results across multiple runs.
     #. Also, there might be several different solutions with the same cost.
 
 .. dropdown:: How do we account for dynamic changing constraints?
 
-    #. cuOpt is stateless and cannot handle dynamic constraints directly, but this can be resolved with modeling.
+    #. rocOpt is stateless and cannot handle dynamic constraints directly, but this can be resolved with modeling.
     #. Dynamic reoptimization is used when there is a change in the conditions of the operation such as a vehicle getting broken, a driver calling in sick, a road block, traffic, or a high-priority order coming in.
-    #. The problem is prepped in such a way that the packages that are already en route are assigned to only those vehicles, and new and old deliveries will be added to this problem. Please refer to example notebooks in :doc:`cuOpt Resources <resources>` to understand more about how to tackle this problem.
+    #. The problem is prepped in such a way that the packages that are already en route are assigned to only those vehicles, and new and old deliveries will be added to this problem. Please refer to example notebooks in :doc:`rocOpt Resources <resources>` to understand more about how to tackle this problem.
 
-.. dropdown:: Does cuOpt take an initial solution?
+.. dropdown:: Does rocOpt take an initial solution?
 
-    Currently, cuOpt doesn't accept the initial solution.
+    Currently, rocOpt doesn't accept the initial solution.
 
 .. dropdown:: Do we need to normalize the data when creating a time window matrix?
 
@@ -261,7 +225,7 @@ Routing FAQ
 
 .. dropdown:: Is there a way to prevent vehicles from traveling along the same path in a waypoint graph, or is there a way to prevent more than one vehicle from visiting a location, or even that a location is only visited one time by a single vehicle?
 
-    Currently, we do not have such restrictions, and cuOpt tries to optimize for the fewest number of vehicles as the primary default objective.
+    Currently, we do not have such restrictions, and rocOpt tries to optimize for the fewest number of vehicles as the primary default objective.
 
 .. dropdown:: Travel time deviation: When using the same dataset, the travel time varies by a couple of seconds in different runs, but the distance remains the same. How can travel time deviate in multiple runs on the same data and distance remains constant?
 
@@ -276,14 +240,16 @@ Routing FAQ
 
     The documentation says ``task_locations`` should be integers. But in the real world, latitude and longitude coordinates are floating point values. To explain this, read the following section.
 
-    cuOpt expects that a user provides either:
+    rocOpt expects that a user provides either:
 
     - A cost matrix and corresponding location indices.
     - A waypoint graph and locations corresponding to waypoints as integers.
 
     So in either case, task locations are actually integer indices into another structure.
 
-    If you have (lat, long) values, then you can generate a cost matrix using a map API. cuOpt does not directly connect to a third-party map engine, but that can be done outside of cuOpt as shown `here <https://github.com/NVIDIA/cuOpt-Resources/blob/main/notebooks/routing/service/cost_matrix_creation.ipynb>`__.
+    If you have (lat, long) values, then you can generate a cost matrix using a map API. rocOpt does not directly connect to a third-party map engine, but that can be done outside of rocOpt.
+
+    .. TODO(rocopt-examples-repo): link to a cost-matrix-creation example notebook in the rocOpt examples repository when available
 
 .. dropdown:: Is it possible to define constraints such as refrigerated vehicles required for certain orders?
 
@@ -293,14 +259,14 @@ Routing FAQ
 
     This can be observed as a pickup and delivery problem.
 
-.. dropdown:: I know that the problem has a feasible solution, but cuOpt returns an infeasible solution. How do I avoid this?
+.. dropdown:: I know that the problem has a feasible solution, but rocOpt returns an infeasible solution. How do I avoid this?
 
     #. The time limit could be too short.
     #. An infeasible solution always provides information about what constraints caused it and which constraint can be relaxed, which might give more hints.
 
 .. dropdown:: How to set prize collection to deliver as many orders as possible ?
 
-   Set all prize values = 1 with a very high prize objective (like 10^6), and then set the other objective values for ``cost``, ``travel_time``, and ``route_variance`` proportional to each other for cuOpt to always return the best possible solution.
+   Set all prize values = 1 with a very high prize objective (like 10^6), and then set the other objective values for ``cost``, ``travel_time``, and ``route_variance`` proportional to each other for rocOpt to always return the best possible solution.
 
 .. dropdown:: What are the limitations of the routing solver?
 
@@ -337,7 +303,7 @@ Linear Programming FAQs
 
 .. dropdown:: How large can the problem be?
 
-    If run on a H100 SXM 80GB (hardware used when using NVIDIA Cloud Functions), you can run the following sizes:
+    On a server-class GPU with 80 GB of memory, you can run the following sizes:
 
     - 4.5M rows/constraints; 4.5M columns/variables; and 900M non-zeros in the constraint matrix
     - 36M rows/constraints; 36M columns/variables; and 720M non-zeros in the constraint matrix
@@ -370,7 +336,7 @@ Linear Programming FAQs
         - 10M rows/constraints, 10M columns/variables, and 2B non-zeros in the constraint matrix.
         - 74.5M rows/constraints, 74.5M columns/variables, and 1.49B non-zeros in the constraint matrix.
 
-.. dropdown:: Does cuOpt implement presolve reductions?
+.. dropdown:: Does rocOpt implement presolve reductions?
 
     We use PaPILO presolve at the root node. It is enabled by default for MIP and disabled by default for LP.
     For LP, dual postsolve is not supported, for this reason dual solution and reduced costs are filled with Nans.
@@ -399,9 +365,9 @@ Container FAQs
 
         docker run --gpus '"device=0,1"' <image>
 
-.. dropdown:: How do I run cuOpt container with options set as environment variables?
+.. dropdown:: How do I run rocOpt container with options set as environment variables?
 
-    You can run cuOpt container with options set as environment variables by using the ``--env`` flag. For example, to set the time limit to 1000 seconds, you can use the following command:
+    You can run rocOpt container with options set as environment variables by using the ``--env`` flag. For example, to set the time limit to 1000 seconds, you can use the following command:
 
     .. code-block:: bash
 

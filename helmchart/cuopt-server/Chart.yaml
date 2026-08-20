@@ -1,17 +1,19 @@
 apiVersion: v2
 appVersion: 26.4.0
-description: A Helm chart for NVIDIA cuOpt Server with GPU support
-home: https://docs.nvidia.com/cuopt/user-guide/latest/resources.html
+description: A Helm chart for the rocOpt Server with GPU support
+# TODO(rocopt-docs): set home to the rocOpt documentation URL when published
+home: https://github.com/AMD-AIOSS/rocopt
 keywords:
-- nvidia
+- rocopt
 - cuopt
 - optimization
 - gpu
 maintainers:
-- email: cuopt@nvidia.com
-  name: cuopt-maintainer
+# TODO(rocopt-contact): set the maintainer email to a rocOpt contact channel
+- email: TODO@example.com
+  name: rocopt-maintainer
 name: cuopt-server
 sources:
-- https://docs.nvidia.com/cuopt/user-guide/latest/resources.html
+- https://github.com/AMD-AIOSS/rocopt
 type: application
 version: 26.4.0

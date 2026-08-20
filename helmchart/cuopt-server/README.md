@@ -1,19 +1,21 @@
-# cuOpt Server Helm Chart
+# rocOpt Server Helm Chart
 
-This Helm chart deploys the NVIDIA cuOpt Server with GPU support on Kubernetes.
+This Helm chart deploys the rocOpt Server with GPU support on Kubernetes.
 
 ## Prerequisites
 
 - Kubernetes cluster with GPU nodes
-- NVIDIA device plugin installed on the cluster
-- NVIDIA GPU Operator (recommended) or manual GPU driver installation
+- A GPU device plugin installed on the cluster
 - Helm 3.x installed
+
+<!-- TODO(rocopt-distribution): document the GPU device plugin / GPU operator combination supported by rocOpt deployments -->
 
 ## Selecting the Container Image
 
-- To use a specific version of the cuOpt server, update the `image.tag` field in `values.yaml`.
+- To use a specific version of the rocOpt server, update the `image.tag` field in `values.yaml`.
 - If the desired version is not available as a release, you may use a nightly image.
-- All available container tags can be found on [Docker Hub](https://hub.docker.com/r/nvidia/cuopt/tags).
+
+<!-- TODO(rocopt-distribution): link to the rocOpt container registry / available tags -->
 ## Installation
 
 ### 1. Add the chart repository (if publishing to a repository)
@@ -44,7 +46,7 @@ kubectl port-forward service/cuopt-server 5000:5000
 ```
 
 ### Accessing the Service
-Once deployed, you can access the cuOpt server API at:
+Once deployed, you can access the rocOpt server API at:
 - `http://localhost:5000` (with port forwarding)
 - Or through the service endpoint within the cluster
 

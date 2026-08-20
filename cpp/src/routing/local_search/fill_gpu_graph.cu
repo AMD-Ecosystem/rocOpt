@@ -21,8 +21,9 @@ namespace detail {
 auto constexpr write_diagonal = true;
 
 template <typename i_t, typename f_t, request_t REQUEST, int TPB>
-__global__ void fill_graph_kernel(typename solution_t<i_t, f_t, REQUEST>::view_t solution,
-                                  typename move_candidates_t<i_t, f_t>::view_t move_candidates)
+__global__ __launch_bounds__(TPB, 1)
+void fill_graph_kernel(typename solution_t<i_t, f_t, REQUEST>::view_t solution,
+                       typename move_candidates_t<i_t, f_t>::view_t move_candidates)
 {
   // each thread group handles a row in the full move_cand matrix
 

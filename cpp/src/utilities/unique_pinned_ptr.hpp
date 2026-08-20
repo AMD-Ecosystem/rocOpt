@@ -11,8 +11,8 @@
 
 #include <hip/hip_runtime.h>
 
-// This is a temporary solution to replace thrust::host_pinned_vector while this bug is not fixed:
-// https://github.com/NVIDIA/cccl/issues/5027
+// This is a temporary solution to replace thrust::host_pinned_vector while an upstream
+// CCCL bug is not fixed.
 
 namespace cuopt {
 

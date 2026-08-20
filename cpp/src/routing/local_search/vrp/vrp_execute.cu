@@ -10,6 +10,7 @@
 #include "../permutation_helper.cuh"
 #include "vrp_execute.cuh"
 #include "vrp_search.cuh"
+#include <routing/utilities/constants.hpp>
 
 #include <hip/hip_cooperative_groups.h>
 
@@ -380,9 +381,12 @@ i_t extract_non_overlapping_moves(solution_t<i_t, f_t, REQUEST>& sol,
   raft::common::nvtx::range fun_scope("extract_non_overlapping_moves");
   i_t TPB                  = 128;
   i_t n_blocks_for_compact = (sol.n_routes * sol.n_routes + TPB - 1) / TPB;
+  CUOPT_KERNEL_TRACE("compact_best_route_pair_moves", "blocks=%d TPB=%d", n_blocks_for_compact, TPB);
   compact_best_route_pair_moves<i_t, f_t, REQUEST>
     <<<n_blocks_for_compact, TPB, 0, sol.sol_handle->get_stream()>>>(sol.view(),
                                                                      move_candidates.view());
+  RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("compact_best_route_pair_moves", sol.sol_handle->get_stream());
   i_t n_best_route_pair_moves =
     move_candidates.vrp_move_candidates.n_best_route_pair_moves.value(sol.sol_handle->get_stream());
   n_best_route_pair_moves = std::min(n_best_route_pair_moves, max_n_best_route_pair_moves);
@@ -393,9 +397,12 @@ i_t extract_non_overlapping_moves(solution_t<i_t, f_t, REQUEST>& sol,
   cuopt_assert(is_set,
                "Not enough shared memory on device for extract_non_overlapping_moves_kernel!");
   cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
+  CUOPT_KERNEL_TRACE("extract_non_overlapping_moves_kernel", "TPB=%d", TPB);
   extract_non_overlapping_moves_kernel<i_t, f_t, REQUEST>
     <<<1, TPB, sh_size, sol.sol_handle->get_stream()>>>(
       sol.view(), move_candidates.view(), seed_generator::get_seed());
+  RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("extract_non_overlapping_moves_kernel", sol.sol_handle->get_stream());
   return move_candidates.vrp_move_candidates.n_of_selected_moves.value(
     sol.sol_handle->get_stream());
 }
@@ -405,10 +412,13 @@ void find_max_added_size(solution_t<i_t, f_t, REQUEST>& sol,
                          move_candidates_t<i_t, f_t>& move_candidates,
                          i_t n_moves_found)
 {
-  i_t TPB      = 32;
+  i_t TPB      = warp_size;
   i_t n_blocks = n_moves_found;
+  CUOPT_KERNEL_TRACE("find_max_added_size_kernel", "blocks=%d TPB=%d", n_blocks, TPB);
   find_max_added_size_kernel<i_t, f_t, REQUEST>
     <<<n_blocks, TPB, 0, sol.sol_handle->get_stream()>>>(sol.view(), move_candidates.view());
+  RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("find_max_added_size_kernel", sol.sol_handle->get_stream());
 }
 
 template <typename i_t, typename f_t, request_t REQUEST>
@@ -450,12 +460,15 @@ bool execute_vrp_moves(solution_t<i_t, f_t, REQUEST>& sol,
   cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
   // FIXME:: Cuda graph is turned off for now because of the assertions triggering in CUDA 12 builds
   // running on V100 move_candidates.vrp_execute_graph.start_capture(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_TRACE("execute_vrp_moves_kernel", "blocks=%d TPB=%d", n_blocks, TPB);
   hipLaunchCooperativeKernel((void*)execute_vrp_moves_kernel<i_t, f_t, REQUEST>,
                               dimGrid,
                               dimBlock,
                               kernelArgs,
                               sh_size,
                               sol.sol_handle->get_stream());
+  RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("execute_vrp_moves_kernel", sol.sol_handle->get_stream());
   sol.compute_route_id_per_node();
   sol.compute_cost();
   // move_candidates.vrp_execute_graph.end_capture(sol.sol_handle->get_stream());

@@ -21,16 +21,27 @@ namespace detail {
 struct cuda_graph_t {
   void start_capture(rmm::cuda_stream_view stream)
   {
+#ifdef __HIP_PLATFORM_AMD__
+    // TODO(ROCm): Bypass hipGraph capture — kernels execute directly on the stream.
+    // Remove this bypass once hipGraph correctness is verified on ROCm.
+    (void)stream;
+    capture_started = true;
+#else
     // Use ThreadLocal mode to allow multi-threaded batch execution
     // Global mode blocks other streams from performing operations during capture
     RAFT_CUDA_TRY(hipStreamBeginCapture(stream, hipStreamCaptureModeThreadLocal));
     capture_started = true;
+#endif
   }
 
   void end_capture(rmm::cuda_stream_view stream)
   {
     cuopt_assert(capture_started, "start_capture was not called before end_capture!");
     cuopt_expects(capture_started, error_type_t::RuntimeError, "A runtime error occurred!");
+#ifdef __HIP_PLATFORM_AMD__
+    capture_started = false;
+    (void)stream;
+#else
     RAFT_CUDA_TRY(hipStreamEndCapture(stream, &graph));
     capture_started = false;
     if (graph_created) {
@@ -47,25 +58,30 @@ struct cuda_graph_t {
       if (graph_created) { RAFT_CUDA_TRY(hipGraphExecDestroy(instance)); }
       // Instantiate graphExec from graph. The error node and
       // error message parameters are unused here.
-#ifdef __HIP_PLATFORM_AMD__
-      // HIP requires 5 arguments for hipGraphInstantiate
-      RAFT_CUDA_TRY(hipGraphInstantiate(&instance, graph, nullptr, nullptr, 0));
-#else
       RAFT_CUDA_TRY(hipGraphInstantiate(&instance, graph));
-#endif
       graph_created = true;
     }
     RAFT_CUDA_TRY(hipGraphDestroy(graph));
+#endif
   }
 
-  void launch_graph(rmm::cuda_stream_view stream) { RAFT_CUDA_TRY(hipGraphLaunch(instance, stream)); }
+  void launch_graph(rmm::cuda_stream_view stream)
+  {
+#ifdef __HIP_PLATFORM_AMD__
+    (void)stream;
+#else
+    RAFT_CUDA_TRY(hipGraphLaunch(instance, stream));
+#endif
+  }
 
   bool graph_created   = false;
   bool capture_started = false;
+#ifndef __HIP_PLATFORM_AMD__
   hipGraph_t graph;
   hipGraphExec_t instance;
   hipGraphExecUpdateResult updateResult;
   hipGraphNode_t errorNode;
+#endif
 };
 
 }  // namespace detail

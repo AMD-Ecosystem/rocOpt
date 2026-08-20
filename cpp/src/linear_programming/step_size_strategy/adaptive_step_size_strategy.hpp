@@ -90,8 +90,7 @@ class adaptive_step_size_strategy_t {
   // Host pinned memory scalar written in kernel
   // Combines both numerical_issue and valid_step size and save the device/host memcpy
   // -1: Error ; 0: Invalid step size ; 1: Valid step size
-  // TODO: Replace with thrust::universal_host_pinned_vector once the bug is fixed:
-  // https://github.com/NVIDIA/cccl/issues/5027
+  // TODO: Replace with thrust::universal_host_pinned_vector once the upstream CCCL bug is fixed.
   std::unique_ptr<i_t, cuda_host_deleter<i_t>> valid_step_size_;
 
   rmm::device_scalar<f_t> interaction_;

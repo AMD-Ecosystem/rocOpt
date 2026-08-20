@@ -238,14 +238,20 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
   auto sol = dm.run_solver();
   if (!context.settings.heuristics_only) {
     // Wait for the branch and bound to finish
-    auto bb_status = branch_and_bound_status_future.get();
-    if (branch_and_bound_solution.lower_bound > -std::numeric_limits<f_t>::infinity()) {
-      context.stats.solution_bound =
-        context.problem_ptr->get_user_obj_from_solver_obj(branch_and_bound_solution.lower_bound);
+    try {
+      auto bb_status = branch_and_bound_status_future.get();
+      if (branch_and_bound_solution.lower_bound > -std::numeric_limits<f_t>::infinity()) {
+        context.stats.solution_bound =
+          context.problem_ptr->get_user_obj_from_solver_obj(branch_and_bound_solution.lower_bound);
+      }
+      if (bb_status == dual_simplex::mip_status_t::INFEASIBLE) { sol.set_problem_fully_reduced(); }
+      context.stats.num_nodes              = branch_and_bound_solution.nodes_explored;
+      context.stats.num_simplex_iterations = branch_and_bound_solution.simplex_iterations;
+    } catch (const std::exception& e) {
+      CUOPT_LOG_WARN("Branch and bound failed: %s. Using heuristic solution.", e.what());
+    } catch (...) {
+      CUOPT_LOG_WARN("Branch and bound failed with unknown error. Using heuristic solution.");
     }
-    if (bb_status == dual_simplex::mip_status_t::INFEASIBLE) { sol.set_problem_fully_reduced(); }
-    context.stats.num_nodes              = branch_and_bound_solution.nodes_explored;
-    context.stats.num_simplex_iterations = branch_and_bound_solution.simplex_iterations;
   }
   sol.compute_feasibility();
   rmm::device_scalar<i_t> is_feasible(sol.handle_ptr->get_stream());

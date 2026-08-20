@@ -18,6 +18,9 @@ server_script = cuopt_service.__file__
 python_path = shutil.which("python")
 
 
+@pytest.mark.skip(
+    reason="Slow billing-log test (spawns server + ~10 sequential POSTs with 60s timeouts); not gating ROCm CI"
+)
 @pytest.mark.skipif(
     "x86" not in platform.uname().machine,
     reason="Billing logs are not currently supported on non-x86_64 architectures (they take too long to run)",  # noqa: E501

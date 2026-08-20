@@ -229,65 +229,73 @@ std::unique_ptr<solver_ret_t> call_solve(
   unsigned int flags,
   bool is_batch_mode)
 {
-  raft::common::nvtx::range fun_scope("Call Solve");
+  try {
+    raft::common::nvtx::range fun_scope("Call Solve");
 #ifdef __HIP_PLATFORM_AMD__
-  // ROCm: hipmm's cuda_stream uses default constructor
-  rmm::cuda_stream stream{};
+    // ROCm: hipmm's cuda_stream uses default constructor
+    rmm::cuda_stream stream{};
 #else
-  // CUDA: RMM's cuda_stream takes flags
-  rmm::cuda_stream stream(static_cast<rmm::cuda_stream::flags>(flags));
+    // CUDA: RMM's cuda_stream takes flags
+    rmm::cuda_stream stream(static_cast<rmm::cuda_stream::flags>(flags));
 #endif
-  const raft::handle_t handle_{stream};
+    const raft::handle_t handle_{stream};
 
-  solver_ret_t response;
+    solver_ret_t response;
 
-  auto op_problem = data_model_to_optimization_problem(data_model, solver_settings, &handle_);
-  if (op_problem.get_problem_category() == linear_programming::problem_category_t::LP) {
-    response.lp_ret =
-      call_solve_lp(op_problem, solver_settings->get_pdlp_settings(), is_batch_mode);
-    response.problem_type = linear_programming::problem_category_t::LP;
-    // Reset stream to per-thread default as non-blocking stream is out of scope after the
-    // function returns.
-    response.lp_ret.primal_solution_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.dual_solution_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.reduced_cost_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.current_primal_solution_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.current_dual_solution_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.initial_primal_average_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.initial_dual_average_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.current_ATY_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.sum_primal_solutions_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.sum_dual_solutions_->set_stream(rmm::cuda_stream_per_thread);
-    response.lp_ret.last_restart_duality_gap_primal_solution_->set_stream(
-      rmm::cuda_stream_per_thread);
-    response.lp_ret.last_restart_duality_gap_dual_solution_->set_stream(
-      rmm::cuda_stream_per_thread);
-  } else {
-    response.mip_ret      = call_solve_mip(op_problem, solver_settings->get_mip_settings());
-    response.problem_type = linear_programming::problem_category_t::MIP;
-    // Reset stream to per-thread default as non-blocking stream is out of scope after the
-    // function returns.
-    response.mip_ret.solution_->set_stream(rmm::cuda_stream_per_thread);
+    auto op_problem = data_model_to_optimization_problem(data_model, solver_settings, &handle_);
+    if (op_problem.get_problem_category() == linear_programming::problem_category_t::LP) {
+      response.lp_ret =
+        call_solve_lp(op_problem, solver_settings->get_pdlp_settings(), is_batch_mode);
+      response.problem_type = linear_programming::problem_category_t::LP;
+      // Reset stream to per-thread default as non-blocking stream is out of scope after the
+      // function returns.
+      response.lp_ret.primal_solution_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.dual_solution_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.reduced_cost_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.current_primal_solution_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.current_dual_solution_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.initial_primal_average_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.initial_dual_average_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.current_ATY_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.sum_primal_solutions_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.sum_dual_solutions_->set_stream(rmm::cuda_stream_per_thread);
+      response.lp_ret.last_restart_duality_gap_primal_solution_->set_stream(
+        rmm::cuda_stream_per_thread);
+      response.lp_ret.last_restart_duality_gap_dual_solution_->set_stream(
+        rmm::cuda_stream_per_thread);
+    } else {
+      response.mip_ret      = call_solve_mip(op_problem, solver_settings->get_mip_settings());
+      response.problem_type = linear_programming::problem_category_t::MIP;
+      // Reset stream to per-thread default as non-blocking stream is out of scope after the
+      // function returns.
+      response.mip_ret.solution_->set_stream(rmm::cuda_stream_per_thread);
+    }
+
+    // Reset warmstart data streams in solver_settings to per-thread default before destroying our
+    // local stream. The warmstart data was created using our stream and its uvectors are associated
+    // with it.
+    auto& warmstart_data = solver_settings->get_pdlp_settings().get_pdlp_warm_start_data();
+    if (warmstart_data.current_primal_solution_.size() > 0) {
+      warmstart_data.current_primal_solution_.set_stream(rmm::cuda_stream_per_thread);
+      warmstart_data.current_dual_solution_.set_stream(rmm::cuda_stream_per_thread);
+      warmstart_data.initial_primal_average_.set_stream(rmm::cuda_stream_per_thread);
+      warmstart_data.initial_dual_average_.set_stream(rmm::cuda_stream_per_thread);
+      warmstart_data.current_ATY_.set_stream(rmm::cuda_stream_per_thread);
+      warmstart_data.sum_primal_solutions_.set_stream(rmm::cuda_stream_per_thread);
+      warmstart_data.sum_dual_solutions_.set_stream(rmm::cuda_stream_per_thread);
+      warmstart_data.last_restart_duality_gap_primal_solution_.set_stream(
+        rmm::cuda_stream_per_thread);
+      warmstart_data.last_restart_duality_gap_dual_solution_.set_stream(rmm::cuda_stream_per_thread);
+    }
+
+    return std::make_unique<solver_ret_t>(std::move(response));
+  } catch (const std::exception& e) {
+    throw std::runtime_error(
+      std::string("{\"CUOPT_ERROR_TYPE\": \"RuntimeError\", \"msg\": \"") + e.what() + "\"}");
+  } catch (...) {
+    throw std::runtime_error(
+      "{\"CUOPT_ERROR_TYPE\": \"RuntimeError\", \"msg\": \"Unknown internal error in solver\"}");
   }
-
-  // Reset warmstart data streams in solver_settings to per-thread default before destroying our
-  // local stream. The warmstart data was created using our stream and its uvectors are associated
-  // with it.
-  auto& warmstart_data = solver_settings->get_pdlp_settings().get_pdlp_warm_start_data();
-  if (warmstart_data.current_primal_solution_.size() > 0) {
-    warmstart_data.current_primal_solution_.set_stream(rmm::cuda_stream_per_thread);
-    warmstart_data.current_dual_solution_.set_stream(rmm::cuda_stream_per_thread);
-    warmstart_data.initial_primal_average_.set_stream(rmm::cuda_stream_per_thread);
-    warmstart_data.initial_dual_average_.set_stream(rmm::cuda_stream_per_thread);
-    warmstart_data.current_ATY_.set_stream(rmm::cuda_stream_per_thread);
-    warmstart_data.sum_primal_solutions_.set_stream(rmm::cuda_stream_per_thread);
-    warmstart_data.sum_dual_solutions_.set_stream(rmm::cuda_stream_per_thread);
-    warmstart_data.last_restart_duality_gap_primal_solution_.set_stream(
-      rmm::cuda_stream_per_thread);
-    warmstart_data.last_restart_duality_gap_dual_solution_.set_stream(rmm::cuda_stream_per_thread);
-  }
-
-  return std::make_unique<solver_ret_t>(std::move(response));
 }
 
 static int compute_max_thread(

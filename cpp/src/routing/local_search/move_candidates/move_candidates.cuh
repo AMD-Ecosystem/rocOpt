@@ -250,12 +250,10 @@ class cand_matrix_t {
     {
       cuopt_assert(sink < matrix_width, "Sink should be smaller than matrix_width!");
       cuopt_assert(source < matrix_height, "Source should be smaller than matrix_height!");
-      // an early check before acquiring the mutex
       if (cand.cost_counter.cost < cost_counter[source * matrix_width + sink].cost) {
-        acquire_lock(&cand_locks[source * matrix_width + sink]);
-        record_if_better(cand, source, sink);
-
-        release_lock(&cand_locks[source * matrix_width + sink]);
+        with_lock(&cand_locks[source * matrix_width + sink], [&]() {
+          record_if_better(cand, source, sink);
+        });
       }
     }
 

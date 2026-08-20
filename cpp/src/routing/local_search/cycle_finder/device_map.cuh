@@ -75,11 +75,14 @@ struct device_map_t {
   struct view_t {
     DI void add(map_key_t const key, value_t const value, uint32_t const pred)
     {
+      if (*stop_inserting) return;
+
       size_t index    = hash(key) % max_available;
       auto curr_value = values[index];
-      // early exit logic
-      while (true) {
+      constexpr int max_probes = 512;
+      for (int _probe = 0; _probe < max_probes; ++_probe) {
         if (curr_value == std::numeric_limits<double>::max()) {
+          if (*stop_inserting) return;
           break;
         } else if (keys[index] == key) {
           if (value >= values[index])
@@ -91,8 +94,8 @@ struct device_map_t {
         curr_value = values[index];
       }
 
-      while (true) {
-        if (acquire_lock(&locks[index])) {
+      for (int _outer = 0; _outer < max_probes; ++_outer) {
+        if (try_acquire_lock(&locks[index])) {
           if (keys[index] == key) {
             if (value < values[index]) {
               values[index]       = value;
@@ -103,6 +106,10 @@ struct device_map_t {
           }
 
           if (keys[index].empty()) {
+            if (*stop_inserting) {
+              release_lock(&locks[index]);
+              return;
+            }
             auto offset = atomicAdd(occupied, 1);
             if (offset < max_size) {
               keys[index]              = key;
@@ -110,6 +117,8 @@ struct device_map_t {
               predecessors[index]      = pred;
               occupied_indices[offset] = {(int)index, (int)key.head};
               atomicAdd(&size_per_head[key.head], 1);
+            } else {
+              *stop_inserting = 1;
             }
             release_lock(&locks[index]);
             return;

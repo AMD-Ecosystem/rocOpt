@@ -122,6 +122,8 @@ TEST(docs, user_problem_file)
   auto problem = create_doc_example_problem();
 
   const auto user_problem_path = std::filesystem::temp_directory_path() / "user_problem.mps";
+  // Clean up leftover files from previous runs
+  std::filesystem::remove(user_problem_path);
   EXPECT_FALSE(std::filesystem::exists(user_problem_path));
 
   settings.time_limit        = test_time_limit;

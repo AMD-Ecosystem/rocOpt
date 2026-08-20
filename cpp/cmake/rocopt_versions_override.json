@@ -1,0 +1,21 @@
+{
+  "packages": {
+    "rocmds_logger": {
+      "version": "1.0.0",
+      "git_shallow": false,
+      "git_url": "https://github.com/${rapids-cmake-rocm-ds-org}/ROCmDS-Logger",
+      "git_tag": "release/rocmds-26.03"
+    },
+    "libhipcxx": {
+      "version": "3.0.2",
+      "git_shallow": false,
+      "git_url": "https://github.com/${rapids-cmake-rocm-org}/libhipcxx",
+      "git_tag": "release/rocmds-26.03"
+    },
+    "rocthrust": {
+      "version": "4.1.0",
+      "git_url": "https://github.com/${rapids-cmake-rocm-org}/rocThrust",
+      "git_tag": "We-always-use-find_package-for-rocthrust."
+    }
+  }
+}

@@ -199,7 +199,7 @@ To enable HTTPS:
   ``server.crt`` and ``server.key`` are meant for server, ``ca.crt`` is meant for client.
 
 
-More examples are available in the `Examples Notebooks Repository <https://github.com/NVIDIA/cuopt-examples>`_.
+.. TODO(rocopt): link to rocOpt examples repository when available
 
 Aborting a Running Job in Thin Client
 -------------------------------------

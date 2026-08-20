@@ -147,7 +147,7 @@ The problem data file should contain a JSON object with the following details
 
 An example data file 'cuopt_problem_data.json' is included with this client.
 
-For more details see https://docs.nvidia.com/cuopt/user-guide/serv-api.html
+<!-- TODO(rocopt-docs): link to the rocOpt server-API user guide when published -->
 
 ## Configuring the cuOpt Server for the Local File Feature
 

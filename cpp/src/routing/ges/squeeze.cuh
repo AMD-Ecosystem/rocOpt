@@ -107,7 +107,11 @@ __global__ void find_best_empty_route_move(typename solution_t<i_t, f_t, REQUEST
     solution, &request, cand, shmem, include_objective, weights, excess_limit, to_route_id);
 
   if (threadIdx.x == 0) {
-    acquire_lock(solution.lock);
+    while (!acquire_lock(solution.lock)) {
+#if defined(__HIP_PLATFORM_AMD__)
+      __builtin_amdgcn_s_sleep(8);
+#endif
+    }
     if (cand->cost_counter.cost < global_best->cost_counter.cost) { *global_best = *cand; }
     release_lock(solution.lock);
   }
@@ -196,8 +200,11 @@ __global__ void find_best_squeeze_pos(typename solution_t<i_t, f_t, REQUEST>::vi
                                       std::numeric_limits<f_t>::max(),
                                       route_id);
   if (threadIdx.x == 0) {
-    // add the route id to which
-    acquire_lock(solution.lock);
+    while (!acquire_lock(solution.lock)) {
+#if defined(__HIP_PLATFORM_AMD__)
+      __builtin_amdgcn_s_sleep(8);
+#endif
+    }
     if (cand->cost_counter.cost < global_best->cost_counter.cost) { *global_best = *cand; }
     release_lock(solution.lock);
   }
@@ -230,13 +237,21 @@ __global__ void find_all_squeeze_pos(
   if (threadIdx.x == 0) {
     // add the route id to which
     if constexpr (squeeze_mode) {
-      acquire_lock(&(solution.lock_per_order[ep_idx]));
+      while (!acquire_lock(&(solution.lock_per_order[ep_idx]))) {
+#if defined(__HIP_PLATFORM_AMD__)
+        __builtin_amdgcn_s_sleep(8);
+#endif
+      }
       if (cand->cost_counter.cost < best_per_request[ep_idx].cost_counter.cost) {
         best_per_request[ep_idx] = *cand;
       }
       release_lock(&(solution.lock_per_order[ep_idx]));
     } else {
-      acquire_lock(&(solution.lock_per_route[route_id]));
+      while (!acquire_lock(&(solution.lock_per_route[route_id]))) {
+#if defined(__HIP_PLATFORM_AMD__)
+        __builtin_amdgcn_s_sleep(8);
+#endif
+      }
       if (cand->cost_counter.cost < best_per_route[route_id].cost_counter.cost) {
         best_per_route[route_id] = *cand;
       }
@@ -259,7 +274,11 @@ __global__ void extract_best_per_route(typename solution_t<i_t, f_t, REQUEST>::v
   // Update global best per route
   if (threadIdx.x == 0) {
     if (best_cand.cost_counter.cost < best_per_route[route_id].cost_counter.cost) {
-      acquire_lock(&(solution.lock_per_route[route_id]));
+      while (!acquire_lock(&(solution.lock_per_route[route_id]))) {
+#if defined(__HIP_PLATFORM_AMD__)
+        __builtin_amdgcn_s_sleep(8);
+#endif
+      }
       if (best_cand.cost_counter.cost < best_per_route[route_id].cost_counter.cost) {
         best_per_route[route_id] = best_cand;
       }

@@ -72,29 +72,32 @@ void pdlp_solver_settings_t<i_t, f_t>::set_pdlp_warm_start_data(
     // related vectors
     if (var_mapping.size() <
         pdlp_warm_start_data_.last_restart_duality_gap_primal_solution_.size()) {
+      // Scatter only var_mapping.size() elements (not the full source range).
+      // The source vectors are larger than the map; iterating past the map
+      // size reads out-of-bounds indices from var_mapping (undefined behavior).
       thrust::scatter(rmm::exec_policy(var_mapping.stream()),
                       pdlp_warm_start_data_.current_primal_solution_.begin(),
-                      pdlp_warm_start_data_.current_primal_solution_.end(),
+                      pdlp_warm_start_data_.current_primal_solution_.begin() + var_mapping.size(),
                       var_mapping.begin(),
                       pdlp_warm_start_data_.current_primal_solution_.begin());
       thrust::scatter(rmm::exec_policy(var_mapping.stream()),
                       pdlp_warm_start_data_.initial_primal_average_.begin(),
-                      pdlp_warm_start_data_.initial_primal_average_.end(),
+                      pdlp_warm_start_data_.initial_primal_average_.begin() + var_mapping.size(),
                       var_mapping.begin(),
                       pdlp_warm_start_data_.initial_primal_average_.begin());
       thrust::scatter(rmm::exec_policy(var_mapping.stream()),
                       pdlp_warm_start_data_.current_ATY_.begin(),
-                      pdlp_warm_start_data_.current_ATY_.end(),
+                      pdlp_warm_start_data_.current_ATY_.begin() + var_mapping.size(),
                       var_mapping.begin(),
                       pdlp_warm_start_data_.current_ATY_.begin());
       thrust::scatter(rmm::exec_policy(var_mapping.stream()),
                       pdlp_warm_start_data_.sum_primal_solutions_.begin(),
-                      pdlp_warm_start_data_.sum_primal_solutions_.end(),
+                      pdlp_warm_start_data_.sum_primal_solutions_.begin() + var_mapping.size(),
                       var_mapping.begin(),
                       pdlp_warm_start_data_.sum_primal_solutions_.begin());
       thrust::scatter(rmm::exec_policy(var_mapping.stream()),
                       pdlp_warm_start_data_.last_restart_duality_gap_primal_solution_.begin(),
-                      pdlp_warm_start_data_.last_restart_duality_gap_primal_solution_.end(),
+                      pdlp_warm_start_data_.last_restart_duality_gap_primal_solution_.begin() + var_mapping.size(),
                       var_mapping.begin(),
                       pdlp_warm_start_data_.last_restart_duality_gap_primal_solution_.begin());
 
@@ -151,24 +154,25 @@ void pdlp_solver_settings_t<i_t, f_t>::set_pdlp_warm_start_data(
     // vectors
     if (constraint_mapping.size() <
         pdlp_warm_start_data_.last_restart_duality_gap_dual_solution_.size()) {
+      // Scatter only constraint_mapping.size() elements (not the full source range).
       thrust::scatter(rmm::exec_policy(constraint_mapping.stream()),
                       pdlp_warm_start_data_.current_dual_solution_.begin(),
-                      pdlp_warm_start_data_.current_dual_solution_.end(),
+                      pdlp_warm_start_data_.current_dual_solution_.begin() + constraint_mapping.size(),
                       constraint_mapping.begin(),
                       pdlp_warm_start_data_.current_dual_solution_.begin());
       thrust::scatter(rmm::exec_policy(constraint_mapping.stream()),
                       pdlp_warm_start_data_.initial_dual_average_.begin(),
-                      pdlp_warm_start_data_.initial_dual_average_.end(),
+                      pdlp_warm_start_data_.initial_dual_average_.begin() + constraint_mapping.size(),
                       constraint_mapping.begin(),
                       pdlp_warm_start_data_.initial_dual_average_.begin());
       thrust::scatter(rmm::exec_policy(constraint_mapping.stream()),
                       pdlp_warm_start_data_.sum_dual_solutions_.begin(),
-                      pdlp_warm_start_data_.sum_dual_solutions_.end(),
+                      pdlp_warm_start_data_.sum_dual_solutions_.begin() + constraint_mapping.size(),
                       constraint_mapping.begin(),
                       pdlp_warm_start_data_.sum_dual_solutions_.begin());
       thrust::scatter(rmm::exec_policy(constraint_mapping.stream()),
                       pdlp_warm_start_data_.last_restart_duality_gap_dual_solution_.begin(),
-                      pdlp_warm_start_data_.last_restart_duality_gap_dual_solution_.end(),
+                      pdlp_warm_start_data_.last_restart_duality_gap_dual_solution_.begin() + constraint_mapping.size(),
                       constraint_mapping.begin(),
                       pdlp_warm_start_data_.last_restart_duality_gap_dual_solution_.begin());
 

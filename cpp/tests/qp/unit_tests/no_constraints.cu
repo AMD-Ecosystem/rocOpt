@@ -24,8 +24,12 @@
 
 namespace cuopt::linear_programming {
 
+// TODO(ROCm): Quadratic objectives require Barrier solver which depends on cuDSS.
 TEST(no_constraints_test, simple_test)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "Quadratic Barrier solver requires cuDSS (not available on ROCm).";
+#endif
   raft::handle_t handle;
 
   // optimize: x1^2 + x2^2

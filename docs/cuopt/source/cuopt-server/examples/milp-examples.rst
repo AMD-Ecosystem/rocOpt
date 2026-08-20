@@ -132,7 +132,7 @@ Incumbent callback response:
     }
 
 
-An example with DataModel is available in the `Examples Notebooks Repository <https://github.com/NVIDIA/cuopt-examples>`_.
+.. TODO(rocopt): link to a DataModel example in the rocOpt examples repository when available
 
 The ``data`` argument to ``get_LP_solve`` may be a dictionary of the format shown in :doc:`MILP Open-API spec <../../open-api>`. More details on the response can be found under responses schema in :doc:`"/cuopt/request" and "/cuopt/solution" API spec <../../open-api>`.
 They can be of different format as well, please check the documentation.

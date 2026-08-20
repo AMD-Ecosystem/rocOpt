@@ -830,11 +830,11 @@ void find_insertions(solution_t<i_t, f_t, REQUEST>& sol,
     cuopt_assert(is_set,
                  "Not enough shared memory on device for computing local search insertions!");
     cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
+    CUOPT_KERNEL_TRACE("find_insertions_kernel<IMPROVE>", "blocks=%d TPB=%d", n_blocks, TPB);
     find_insertions_kernel<i_t, f_t, REQUEST, search_type_t::IMPROVE, insert_unserviced>
       <<<n_blocks, TPB, shared_size, sol.sol_handle->get_stream()>>>(
         sol.view(), move_candidates.view(), seed_generator::get_seed());
   } else {
-    // for cross the load-balance factor is always 4
     move_candidates.number_of_blocks_per_ls_route =
       std::max(1, sol.get_max_active_nodes_for_all_routes() / 4);
     if (search_type == search_type_t::CROSS) {
@@ -846,11 +846,11 @@ void find_insertions(solution_t<i_t, f_t, REQUEST>& sol,
       cuopt_assert(is_set,
                    "Not enough shared memory on device for computing local search insertions!");
       cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
+      CUOPT_KERNEL_TRACE("find_insertions_kernel<CROSS>", "blocks=%d TPB=%d", n_blocks, TPB);
       find_insertions_kernel<i_t, f_t, REQUEST, search_type_t::CROSS, insert_unserviced>
         <<<n_blocks, TPB, shared_size, sol.sol_handle->get_stream()>>>(
           sol.view(), move_candidates.view(), seed_generator::get_seed());
     } else if (search_type == search_type_t::RANDOM) {
-      // we don't search for relocates in random.
       n_blocks    = sol.get_num_requests();
       bool is_set = set_shmem_of_kernel(
         find_insertions_kernel<i_t, f_t, REQUEST, search_type_t::RANDOM, insert_unserviced>,
@@ -858,12 +858,14 @@ void find_insertions(solution_t<i_t, f_t, REQUEST>& sol,
       cuopt_assert(is_set,
                    "Not enough shared memory on device for computing local search insertions!");
       cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
+      CUOPT_KERNEL_TRACE("find_insertions_kernel<RANDOM>", "blocks=%d TPB=%d", n_blocks, TPB);
       find_insertions_kernel<i_t, f_t, REQUEST, search_type_t::RANDOM, insert_unserviced>
         <<<n_blocks, TPB, shared_size, sol.sol_handle->get_stream()>>>(
           sol.view(), move_candidates.view(), seed_generator::get_seed());
     }
   }
   RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("find_insertions_kernel", sol.sol_handle->get_stream());
   sol.sol_handle->sync_stream();
 }
 

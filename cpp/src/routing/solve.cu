@@ -19,12 +19,24 @@ assignment_t<i_t> solve(data_model_view_t<i_t, f_t> const& data_model,
     cuopt::routing::solver_t<i_t, f_t> solver(data_model, settings);
     return solver.solve();
   } catch (const cuopt::logic_error& e) {
+    fprintf(stderr, "[solve] caught cuopt::logic_error: %s\n", e.what());
     CUOPT_LOG_ERROR("Error in solve: %s", e.what());
     return assignment_t<i_t>(e, data_model.get_handle_ptr()->get_stream());
   } catch (const std::bad_alloc& e) {
+    fprintf(stderr, "[solve] caught std::bad_alloc: %s\n", e.what());
     CUOPT_LOG_ERROR("Error in solve: %s", e.what());
     return assignment_t<i_t>(
       cuopt::logic_error("Memory allocation failed", cuopt::error_type_t::RuntimeError),
+      data_model.get_handle_ptr()->get_stream());
+  } catch (const std::exception& e) {
+    fprintf(stderr, "[solve] caught std::exception: %s\n", e.what());
+    return assignment_t<i_t>(
+      cuopt::logic_error(e.what(), cuopt::error_type_t::RuntimeError),
+      data_model.get_handle_ptr()->get_stream());
+  } catch (...) {
+    fprintf(stderr, "[solve] caught unknown exception\n");
+    return assignment_t<i_t>(
+      cuopt::logic_error("Unknown error", cuopt::error_type_t::RuntimeError),
       data_model.get_handle_ptr()->get_stream());
   }
 }

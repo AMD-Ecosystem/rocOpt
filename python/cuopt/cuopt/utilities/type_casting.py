@@ -5,10 +5,10 @@ import warnings
 
 import numpy as np
 
-import cudf
-
 
 def type_cast(cudf_obj, np_type, name):
+    import cudf
+
     if isinstance(cudf_obj, cudf.Series):
         cudf_type = cudf_obj.dtype
     elif isinstance(cudf_obj, cudf.DataFrame):

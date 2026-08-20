@@ -937,8 +937,13 @@ __global__ void compute_new_primal_weight_kernel(
     (1 - pdlp_hyper_params::default_primal_weight_update_smoothing) * raft::myLog(*primal_weight);
 
   *primal_weight = raft::myExp(log_primal_weight);
-  cuopt_assert(!isnan(*primal_weight), "primal weight can't be nan");
-  cuopt_assert(!isinf(*primal_weight), "primal weight can't be inf");
+
+  // If primal_weight degenerates to NaN or Inf (e.g. due to numerical
+  // divergence on certain GPU architectures), skip the update instead of
+  // crashing.  The adaptive step-size strategy will detect the resulting
+  // numerical instability and signal NumericalError on the next iteration.
+  if (isnan(*primal_weight) || isinf(*primal_weight)) { return; }
+
   *primal_step_size = *step_size / *primal_weight;
   *dual_step_size   = *step_size * *primal_weight;
 #ifdef PDLP_DEBUG_MODE

@@ -18,6 +18,7 @@
 
 #include <unistd.h>
 #include <argparse/argparse.hpp>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -330,6 +331,14 @@ int main(int argc, char* argv[])
   }
   // Get the values
   std::string file_name = program.get<std::string>("filename");
+
+  // Default the solution file to <input_basename>.sol in the same directory
+  if (settings_strings.find(CUOPT_SOLUTION_FILE) == settings_strings.end()) {
+    std::filesystem::path input_path(file_name);
+    auto sol_path = input_path.parent_path() / input_path.stem();
+    sol_path += ".sol";
+    settings_strings[CUOPT_SOLUTION_FILE] = sol_path.string();
+  }
 
   const auto initial_solution_file = program.get<std::string>("--initial-solution");
   const auto solve_relaxation      = program.get<bool>("--relaxation");

@@ -34,12 +34,13 @@ bool guided_ejection_search_t<i_t, f_t, REQUEST>::repair_empty_routes()
     auto const sh_find = sh_route + sizeof(cand_t);
 
     if (!set_shmem_of_kernel(find_best_empty_route_move<i_t, f_t, REQUEST>, sh_find)) { break; }
-    // reset the best move stored
     best_move.set_value_async(uninit_cand, solution_ptr->sol_handle->get_stream());
+    CUOPT_KERNEL_TRACE("find_best_empty_route_move", "blocks=%d TPB=%d", (int)n_blocks, TPB);
     find_best_empty_route_move<i_t, f_t, REQUEST>
       <<<n_blocks, TPB, sh_find, solution_ptr->sol_handle->get_stream()>>>(
         solution_ptr->view(), best_move.data(), include_objective, default_weights, excess_limit);
     RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+    CUOPT_KERNEL_SYNC_CHECK("find_best_empty_route_move", solution_ptr->sol_handle->get_stream());
 
     // If unable to find feasible moves, switch to least excess moves
     cand_t best_move_h = best_move.value(solution_ptr->sol_handle->get_stream());
@@ -50,10 +51,12 @@ bool guided_ejection_search_t<i_t, f_t, REQUEST>::repair_empty_routes()
     }
 
     if (!set_shmem_of_kernel(execute_best_empty_route_move<i_t, f_t, REQUEST>, sh_route)) { break; }
+    CUOPT_KERNEL_TRACE("execute_best_empty_route_move", "TPB=%d", TPB);
     execute_best_empty_route_move<i_t, f_t, REQUEST>
       <<<1, TPB, sh_route, solution_ptr->sol_handle->get_stream()>>>(solution_ptr->view(),
                                                                      best_move.data());
     RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+    CUOPT_KERNEL_SYNC_CHECK("execute_best_empty_route_move", solution_ptr->sol_handle->get_stream());
     ++counter;
   }
   solution_ptr->sol_handle->sync_stream();
@@ -93,7 +96,7 @@ i_t guided_ejection_search_t<i_t, f_t, REQUEST>::try_multiple_insert(i_t n_inser
     bool is_set =
       set_shmem_of_kernel(find_all_squeeze_pos<i_t, f_t, REQUEST, squeeze_mode>, sh_size);
     cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
-    // insert the request greedily to a position that will generate the least excess
+    CUOPT_KERNEL_TRACE("find_all_squeeze_pos", "blocks=%d TPB=%d", n_blocks, TPB);
     find_all_squeeze_pos<i_t, f_t, REQUEST, squeeze_mode>
       <<<n_blocks, TPB, sh_size, stream>>>(solution_ptr->view(),
                                            EP.view(),
@@ -105,21 +108,24 @@ i_t guided_ejection_search_t<i_t, f_t, REQUEST>::try_multiple_insert(i_t n_inser
                                            n_insertions,
                                            inserted_requests.data());
     RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+    CUOPT_KERNEL_SYNC_CHECK("find_all_squeeze_pos", stream);
 
     if constexpr (squeeze_mode) {
       size_t move_blocks = solution_ptr->get_num_requests();
+      CUOPT_KERNEL_TRACE("extract_best_per_route", "blocks=%zu TPB=%d", move_blocks, TPB);
       extract_best_per_route<i_t, f_t, REQUEST>
         <<<move_blocks, TPB, 0, stream>>>(solution_ptr->view(),
                                           cuopt::make_span(best_squeeze_per_cand),
                                           cuopt::make_span(best_squeeze_per_route));
       RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+      CUOPT_KERNEL_SYNC_CHECK("extract_best_per_route", stream);
     }
 
     size_t move_blocks = solution_ptr->get_n_routes();
     is_set =
       set_shmem_of_kernel(execute_all_move<i_t, f_t, REQUEST, squeeze_mode>, shmem_for_route);
     cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
-    // execute squeeze moves
+    CUOPT_KERNEL_TRACE("execute_all_move", "blocks=%zu TPB=%d", move_blocks, TPB);
     execute_all_move<i_t, f_t, REQUEST, squeeze_mode>
       <<<move_blocks, TPB, shmem_for_route, stream>>>(solution_ptr->view(),
                                                       cuopt::make_span(best_squeeze_per_cand),
@@ -127,13 +133,15 @@ i_t guided_ejection_search_t<i_t, f_t, REQUEST>::try_multiple_insert(i_t n_inser
                                                       inserted_requests.data(),
                                                       number_of_inserted.data());
     RAFT_CHECK_CUDA(stream);
+    CUOPT_KERNEL_SYNC_CHECK("execute_all_move", stream);
     auto n_inserted = number_of_inserted.value(stream);
 
     if (n_inserted == 0) {
-      //  Some of the attempted requests could not be inserted in this call or following ones
-      //  after perturbations
+      CUOPT_KERNEL_TRACE("increase_multiple_p_scores", "");
       increase_multiple_p_scores<i_t, f_t, REQUEST>
         <<<1, 64, 0, stream>>>(EP.view(), p_scores_.data(), inserted_requests.data(), n_insertions);
+      RAFT_CHECK_CUDA(stream);
+      CUOPT_KERNEL_SYNC_CHECK("increase_multiple_p_scores", stream);
       break;
     }
     counter += n_inserted;
@@ -171,9 +179,11 @@ i_t guided_ejection_search_t<i_t, f_t, REQUEST>::try_multiple_feasible_insertion
   i_t successful_insertions = try_multiple_insert<squeeze_mode>(
     n_insertions, default_weights, std::numeric_limits<f_t>::epsilon(), include_objective);
 
-  eject_inserted_requests<i_t, f_t, REQUEST><<<1, 32, 0, solution_ptr->sol_handle->get_stream()>>>(
+  CUOPT_KERNEL_TRACE("eject_inserted_requests(feasible)", "");
+  eject_inserted_requests<i_t, f_t, REQUEST><<<1, warp_size, 0, solution_ptr->sol_handle->get_stream()>>>(
     EP.view(), inserted_requests.data(), n_insertions);
   RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("eject_inserted_requests(feasible)", solution_ptr->sol_handle->get_stream());
 
   // Index is not updated in device view
   EP.index_ -= successful_insertions;
@@ -209,10 +219,12 @@ void guided_ejection_search_t<i_t, f_t, REQUEST>::squeeze_all_ep()
     }
     if (successful_insertions == 0) { run_batches = false; }
 
+    CUOPT_KERNEL_TRACE("eject_inserted_requests(batch)", "");
     eject_inserted_requests<i_t, f_t, REQUEST>
-      <<<1, 32, 0, solution_ptr->sol_handle->get_stream()>>>(
+      <<<1, warp_size, 0, solution_ptr->sol_handle->get_stream()>>>(
         EP.view(), inserted_requests.data(), batch_size);
     RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+    CUOPT_KERNEL_SYNC_CHECK("eject_inserted_requests(batch)", solution_ptr->sol_handle->get_stream());
 
     // Index is not updated in device view
     EP.index_ -= successful_insertions;
@@ -297,7 +309,7 @@ void guided_ejection_search_t<i_t, f_t, REQUEST>::squeeze(
   constexpr bool include_objective = false;
   if (random_route) {
     i_t route_id = dist_candidate(gen_candidate) % solution_ptr->get_n_routes();
-    // insert the request greedily to a position that will generate the least excess
+    CUOPT_KERNEL_TRACE("find_best_squeeze_pos(random)", "TPB=%d", TPB);
     find_best_squeeze_pos<i_t, f_t, REQUEST>
       <<<1, TPB, sh_size, stream>>>(solution_ptr->view(),
                                     request,
@@ -306,7 +318,9 @@ void guided_ejection_search_t<i_t, f_t, REQUEST>::squeeze(
                                     local_search_ptr_->move_candidates.weights,
                                     route_id);
     RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+    CUOPT_KERNEL_SYNC_CHECK("find_best_squeeze_pos(random)", stream);
   } else {
+    CUOPT_KERNEL_TRACE("find_best_squeeze_pos", "blocks=%d TPB=%d", n_blocks, TPB);
     find_best_squeeze_pos<i_t, f_t, REQUEST>
       <<<n_blocks, TPB, sh_size, stream>>>(solution_ptr->view(),
                                            request,
@@ -314,11 +328,13 @@ void guided_ejection_search_t<i_t, f_t, REQUEST>::squeeze(
                                            include_objective,
                                            local_search_ptr_->move_candidates.weights);
     RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+    CUOPT_KERNEL_SYNC_CHECK("find_best_squeeze_pos", stream);
   }
   cuopt_assert(best_move.value(stream).cost_counter.cost != std::numeric_limits<double>::max(),
                "At least a move should be found in squeeze");
-  // execute squeeze
+  CUOPT_KERNEL_TRACE("execute_move", "");
   execute_move<i_t, f_t><<<1, 1, 0, stream>>>(solution_ptr->view(), request, best_move.data());
+  CUOPT_KERNEL_SYNC_CHECK("execute_move", stream);
   solution_ptr->compute_cost();
   solution_ptr->global_runtime_checks(false, false, "squeeze");
   stream.synchronize();
@@ -378,9 +394,11 @@ void guided_ejection_search_t<i_t, f_t, REQUEST>::squeeze_breaks()
     return;
   }
 
+  CUOPT_KERNEL_TRACE("squeeze_breaks_kernel", "blocks=%zu TPB=%zu", n_blocks, TPB);
   squeeze_breaks_kernel<i_t, f_t, REQUEST><<<n_blocks, TPB, sh_size, stream>>>(
     solution_ptr->view(), false, local_search_ptr_->move_candidates.weights);
   RAFT_CHECK_CUDA(solution_ptr->sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("squeeze_breaks_kernel", stream);
   solution_ptr->compute_cost();
   solution_ptr->global_runtime_checks(false, false, "squeeze_breaks_end");
   return;

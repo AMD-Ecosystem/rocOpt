@@ -111,6 +111,22 @@ BUILD_ABI=${BUILD_ABI:=ON}
 
 export CMAKE_GENERATOR=Ninja
 
+# ROCm-specific pip configuration: use AMD PyPI index and constraints file
+# to prevent NVIDIA stub packages (e.g. amd-cupy==0.0.2) from being installed.
+ROCM_PIP_CONSTRAINTS="${REPODIR}/rocm_pip_constraints.txt"
+
+# AMD PyPI versioned index — packages like amd-pylibraft, amd-hipdf, etc.
+# are published under version-specific indexes (e.g. rocm-7.2.3/simple).
+# The open rocm-7.2.3 index hosts the ROCm-DS 26.03 packages used here.
+#
+# Overridable so a caller that already knows which ROCm version it is targeting
+# can keep this in step with it. docker/Dockerfile.rocm_ci exports
+# AMD_PYPI_ROCM_VERSION for exactly this reason: it builds on ROCm 7.1.1 but
+# installs wheels that must run on the 7.2.3 release image, so the two places
+# that name an index version must not drift apart.
+AMD_PYPI_ROCM_VERSION="${AMD_PYPI_ROCM_VERSION:-7.2.3}"
+AMD_PYPI_INDEX="${AMD_PYPI_INDEX:-https://pypi.amd.com/rocm-${AMD_PYPI_ROCM_VERSION}/simple}"
+
 function hasArg {
     (( NUMARGS != 0 )) && (echo " ${ARGS} " | grep -q " $1 ")
 }
@@ -329,29 +345,42 @@ if [ ${BUILD_TSAN} -eq 1 ] && [ ${BUILD_MSAN} -eq 1 ]; then
     exit 1
 fi
 
+# For ROCm builds, set pip environment so all pip invocations use AMD's
+# package index and the constraints file that prevents stub downgrades.
+if [ ${USE_ROCM} -eq 1 ]; then
+    export PIP_EXTRA_INDEX_URL="${AMD_PYPI_INDEX}"
+    if [ -f "${ROCM_PIP_CONSTRAINTS}" ]; then
+        export PIP_CONSTRAINT="${ROCM_PIP_CONSTRAINTS}"
+        echo "ROCm pip constraints: ${ROCM_PIP_CONSTRAINTS}"
+    fi
+    echo "ROCm AMD PyPI index: ${AMD_PYPI_INDEX}"
+
+    # Ensure libcuopt.so and libmps_parser.so are findable at runtime.
+    # After 'cmake --install', these libraries land in ${INSTALL_PREFIX}/lib.
+    # The build directories are also included so that tests work even before
+    # a full install (e.g. during incremental development).
+    export LD_LIBRARY_PATH="${INSTALL_PREFIX}/lib:${LIBCUOPT_BUILD_DIR}:${LIBMPS_PARSER_BUILD_DIR}:${LD_LIBRARY_PATH}"
+    echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
+fi
+
 # Configure GPU architectures
 if [ ${USE_ROCM} -eq 1 ]; then
     # ROCm GPU architectures
     if [ ${BUILD_ALL_GPU_ARCH} -eq 1 ]; then
-        CUOPT_CMAKE_GPU_ARCHITECTURES="gfx900;gfx906;gfx908;gfx90a;gfx940;gfx941;gfx942"
+        CUOPT_CMAKE_GPU_ARCHITECTURES="gfx900;gfx906;gfx908;gfx90a;gfx940;gfx941;gfx942;gfx950"
         echo "Building for *ALL* supported AMD GPU architectures..."
     elif [ ${BUILD_CI_ONLY} -eq 1 ]; then
         CUOPT_CMAKE_GPU_ARCHITECTURES="gfx90a;gfx908"
         echo "Building for CI AMD GPU architectures (gfx90a, gfx908)..."
     else
-        # Detect native AMD GPU
-        if command -v rocminfo &> /dev/null; then
-            DETECTED_ARCH=$(rocminfo | grep "Name:" | grep "gfx" | head -1 | awk '{print $2}')
-            if [ -n "$DETECTED_ARCH" ]; then
-                CUOPT_CMAKE_GPU_ARCHITECTURES="$DETECTED_ARCH"
-                echo "Building for detected AMD GPU architecture: $DETECTED_ARCH"
-            else
-                CUOPT_CMAKE_GPU_ARCHITECTURES="gfx90a"
-                echo "Could not detect AMD GPU, defaulting to gfx90a"
-            fi
+        # Honor explicit arch override; CI CPU builders pass ROCOPT_GPU_ARCH as a
+        # multi-arch fat binary (gfx942;gfx950).  When unset, use the same default.
+        if [ -n "${ROCOPT_GPU_ARCH:-}" ]; then
+            CUOPT_CMAKE_GPU_ARCHITECTURES="${ROCOPT_GPU_ARCH}"
+            echo "Building for ROCOPT_GPU_ARCH from environment: ${CUOPT_CMAKE_GPU_ARCHITECTURES}"
         else
-            CUOPT_CMAKE_GPU_ARCHITECTURES="gfx90a"
-            echo "rocminfo not found, defaulting to gfx90a"
+            CUOPT_CMAKE_GPU_ARCHITECTURES="${ROCOPT_GPU_ARCH_FALLBACK:-gfx942;gfx950}"
+            echo "Building for default multi-arch fat binary: ${CUOPT_CMAKE_GPU_ARCHITECTURES}"
         fi
     fi
     ARCH_CMAKE_VAR="CMAKE_HIP_ARCHITECTURES"
@@ -378,6 +407,7 @@ if buildAll || hasArg libmps_parser; then
     cmake -DDEFINE_ASSERT=${DEFINE_ASSERT} \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
           -DUSE_ROCM=${USE_ROCM} \
+          -DCPM_DOWNLOAD_ALL=ON \
           "${CACHE_ARGS[@]}" \
           "${REPODIR}"/cpp/libmps_parser/
 
@@ -404,6 +434,7 @@ if buildAll || hasArg libcuopt; then
     
     cmake -DDEFINE_ASSERT=${DEFINE_ASSERT} \
           -DDEFINE_BENCHMARK="${DEFINE_BENCHMARK}" \
+          -DBUILD_LP_BENCHMARKS="${DEFINE_BENCHMARK}" \
           -DDEFINE_PDLP_VERBOSE_MODE=${DEFINE_PDLP_VERBOSE_MODE} \
           -DLIBCUOPT_LOGGING_LEVEL="${LOGGING_ACTIVE_LEVEL}" \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
@@ -422,6 +453,7 @@ if buildAll || hasArg libcuopt; then
           -DWRITE_FATBIN=${WRITE_FATBIN} \
           -DHOST_LINEINFO=${HOST_LINEINFO} \
           -DINSTALL_TARGET="${INSTALL_TARGET}" \
+          -DCPM_DOWNLOAD_ALL=ON \
           "${CACHE_ARGS[@]}" \
           "${EXTRA_CMAKE_ARGS[@]}" \
           "${REPODIR}"/cpp
@@ -429,7 +461,19 @@ if buildAll || hasArg libcuopt; then
     if hasArg -n; then
         cmake --build "${LIBCUOPT_BUILD_DIR}" ${VERBOSE_FLAG}
     else
+        # Build the default `all` target first, then install.  We can't rely on
+        # `--target install` alone to compile the gtest executables: their
+        # install rules are EXCLUDE_FROM_ALL (see cpp/tests/CMakeLists.txt), so
+        # the install target never builds them.  Building `all` compiles the
+        # library AND the test executables (the latter only exist when
+        # BUILD_TESTS=ON, i.e. when --skip-tests-build was NOT passed).
+        cmake --build "${LIBCUOPT_BUILD_DIR}" ${VERBOSE_FLAG} -j"${PARALLEL_LEVEL}"
         cmake --build "${LIBCUOPT_BUILD_DIR}" --target ${INSTALL_TARGET} ${VERBOSE_FLAG} -j"${PARALLEL_LEVEL}"
+        # Install the EXCLUDE_FROM_ALL `testing` component so the gtest binaries
+        # land in <prefix>/bin/gtests/libcuopt, where the test driver looks.
+        if [ "${SKIP_TESTS_BUILD}" -eq 0 ]; then
+            cmake --install "${LIBCUOPT_BUILD_DIR}" --component testing
+        fi
     fi
 fi
 
@@ -447,11 +491,29 @@ if hasArg deb; then
     echo "Deb package created in ${LIBCUOPT_BUILD_DIR}"
 fi
 
+# scikit-build-core splits SKBUILD_CMAKE_ARGS on ';'.  Write the GPU arch list to a
+# CMake initial-cache file so multi-arch values like gfx942;gfx950 are not split.
+if buildAll || hasArg cuopt || hasArg cuopt_mps_parser; then
+    SKBUILD_ARCH_CACHE=$(mktemp --suffix=.cmake)
+    # -C expects a CMake script (set ... CACHE), not CMakeCache.txt VAR:TYPE=value syntax.
+    printf 'set(%s "%s" CACHE STRING "" FORCE)\n' "${ARCH_CMAKE_VAR}" "${CUOPT_CMAKE_GPU_ARCHITECTURES}" > "${SKBUILD_ARCH_CACHE}"
+    SKBUILD_CMAKE_ARGS="-C ${SKBUILD_ARCH_CACHE};-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUOPT_BUILD_DIR};-DUSE_ROCM=${USE_ROCM};${EXTRA_CMAKE_ARGS[*]// /;}"
+fi
+
+# Build and install the libcuopt Python package (runtime loader for libcuopt.so).
+# This must come BEFORE cuopt because cuopt/__init__.py does 'import libcuopt'.
+if buildAll || hasArg cuopt; then
+    cd "${REPODIR}"/python/libcuopt
+
+    SKBUILD_CMAKE_ARGS="${SKBUILD_CMAKE_ARGS}" \
+        python "${PYTHON_ARGS_FOR_INSTALL[@]}" .
+fi
+
 # Build and install the cuopt Python package
 if buildAll || hasArg cuopt; then
     cd "${REPODIR}"/python/cuopt
 
-    SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUOPT_BUILD_DIR};-D${ARCH_CMAKE_VAR}=${CUOPT_CMAKE_GPU_ARCHITECTURES};-DUSE_ROCM=${USE_ROCM};${EXTRA_CMAKE_ARGS[*]// /;}" \
+    SKBUILD_CMAKE_ARGS="${SKBUILD_CMAKE_ARGS}" \
         python "${PYTHON_ARGS_FOR_INSTALL[@]}" .
 fi
 
@@ -459,7 +521,7 @@ fi
 if buildAll || hasArg cuopt_mps_parser; then
     cd "${REPODIR}"/python/cuopt/cuopt/linear_programming
 
-    SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUOPT_BUILD_DIR};-D${ARCH_CMAKE_VAR}=${CUOPT_CMAKE_GPU_ARCHITECTURES};-DUSE_ROCM=${USE_ROCM};${EXTRA_CMAKE_ARGS[*]// /;}" \
+    SKBUILD_CMAKE_ARGS="${SKBUILD_CMAKE_ARGS}" \
         python "${PYTHON_ARGS_FOR_INSTALL[@]}" .
 fi
 
@@ -477,6 +539,29 @@ fi
 
 # Build the docs
 if buildAll || hasArg docs; then
+    # Ensure ROCm Data Science packages are present for the Sphinx docs build.
+    # The cuopt pip installs above may trigger resolution that replaces amd-cupy
+    # with the NVIDIA cupy-cuda13x stub; reinstall here to guarantee correctness.
+    if [ ${USE_ROCM} -eq 1 ]; then
+        pip install --force-reinstall amd-hipdf==3.0.0 --extra-index-url="${AMD_PYPI_INDEX}"
+        pip install rocm-docs-core
+
+        # numba-hip expects a specific Clang version directory under /opt/rocm/llvm/.
+        # When the installed numba-hip was built for a different ROCm release, the
+        # expected Clang directory may not exist (e.g. numba-hip from rocm-7.0.2
+        # looks for Clang 20, but ROCm 7.2 ships Clang 22).  Create a compatibility
+        # symlink so the import succeeds on any ROCm 7.x version.
+        ACTUAL_CLANG_DIR=$(ls -d /opt/rocm/llvm/lib/clang/[0-9]* 2>/dev/null | head -1)
+        if [ -n "${ACTUAL_CLANG_DIR}" ]; then
+            for expected in 18 19 20 21 22 23; do
+                target="/opt/rocm/llvm/lib/clang/${expected}"
+                if [ ! -e "${target}" ] && [ ! -L "${target}" ]; then
+                    ln -sf "${ACTUAL_CLANG_DIR}" "${target}" 2>/dev/null || true
+                fi
+            done
+        fi
+    fi
+
     cd "${REPODIR}"/cpp/doxygen
     doxygen Doxyfile
 

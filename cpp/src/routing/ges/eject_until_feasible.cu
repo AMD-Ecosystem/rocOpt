@@ -368,14 +368,17 @@ void solution_t<i_t, f_t, REQUEST>::eject_until_feasible(bool add_slack_to_sol)
 {
   raft::common::nvtx::range fun_scope("eject_until_feasible");
   auto stream   = sol_handle->get_stream();
-  const i_t TPB = 32;
+  const i_t TPB = warp_size;
   compute_max_active();
   size_t sh_size = get_temp_route_shared_size();
   bool is_set    = set_shmem_of_kernel(eject_until_feasible_kernel<i_t, f_t, REQUEST>, sh_size);
   cuopt_assert(is_set, "Not enough shared memory on device for get_all_feasible_insertion!");
   cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
+  CUOPT_KERNEL_TRACE("eject_until_feasible_kernel", "blocks=%d TPB=%d", n_routes, TPB);
   eject_until_feasible_kernel<i_t, f_t, REQUEST>
     <<<n_routes, TPB, sh_size, stream>>>(view(), add_slack_to_sol, seed_generator::get_seed());
+  RAFT_CHECK_CUDA(stream);
+  CUOPT_KERNEL_SYNC_CHECK("eject_until_feasible_kernel", stream);
   compute_cost();
   global_runtime_checks(false, true, "eject_until_feasible");
 }

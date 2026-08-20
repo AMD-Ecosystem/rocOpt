@@ -781,16 +781,14 @@ __global__ void kernel_perform_sliding_window(
   // Handle non found case
   if (shbuf[0] != std::numeric_limits<double>::max() && shbuf[0] < -EPSILON &&
       reduction_index == threadIdx.x) {
-    // move_candidates.nodes_to_search.active_nodes_impacted[node_info.node()] = 1;
-    while (atomicCAS(&locks[route_id], 0, 1))
-      ;
-    // Acquire
-    __threadfence();
+    while (!acquire_lock(&locks[route_id])) {
+#if defined(__HIP_PLATFORM_AMD__)
+      __builtin_amdgcn_s_sleep(8);
+#endif
+    }
     if (found_sliding_solution.delta < best_candidates[route_id].delta)
       best_candidates[route_id] = found_sliding_solution;
-    __threadfence();
-    // Release
-    locks[route_id] = 0;
+    release_lock(&locks[route_id]);
   }
 }
 
@@ -1083,8 +1081,10 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_sliding_window(
                                               blocks_per_node);
   }
   sliding_cuda_graph.end_capture(solution.sol_handle->get_stream());
+  CUOPT_KERNEL_TRACE("sliding_cuda_graph", "find_phase");
   sliding_cuda_graph.launch_graph(solution.sol_handle->get_stream());
   RAFT_CHECK_CUDA(solution.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("sliding_cuda_graph", solution.sol_handle->get_stream());
   n_moves_found = thrust::count_if(solution.sol_handle->get_thrust_policy(),
                                    found_sliding_solution_data_.begin(),
                                    found_sliding_solution_data_.end(),
@@ -1103,7 +1103,7 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_sliding_window(
   cuopt_func_call(cost_before =
                     solution.get_cost(move_candidates.include_objective, move_candidates.weights));
 
-  // One block for each found route
+  CUOPT_KERNEL_TRACE("execute_sliding_move", "blocks=%d TPB=256", solution.n_routes);
   execute_sliding_move<i_t, f_t, REQUEST>
     <<<solution.n_routes, 256, aligned_shared_size, solution.sol_handle->get_stream()>>>(
       solution.view(),
@@ -1111,6 +1111,7 @@ bool local_search_t<i_t, f_t, REQUEST>::perform_sliding_window(
       move_candidates.view(),
       move_candidates.debug_delta.data());
   RAFT_CHECK_CUDA(solution.sol_handle->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("execute_sliding_move", solution.sol_handle->get_stream());
   cuopt_func_call(solution.compute_cost());
   cuopt_func_call(cost_after =
                     solution.get_cost(move_candidates.include_objective, move_candidates.weights));

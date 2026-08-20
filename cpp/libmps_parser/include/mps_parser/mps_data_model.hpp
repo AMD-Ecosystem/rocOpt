@@ -58,7 +58,7 @@ class mps_data_model_t {
   void set_maximize(bool maximize);
   /**
    * @brief Set the constraint matrix (A) in CSR format. For more information about CSR checkout:
-   * https://docs.nvidia.com/cuda/cusparse/index.html#compressed-sparse-row-csr
+   * https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
 
    * @note Setting before calling the solver is mandatory.
    *

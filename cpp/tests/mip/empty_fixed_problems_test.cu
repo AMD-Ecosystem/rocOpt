@@ -69,8 +69,12 @@ TEST(mip_solve, empty_max_problem_with_objective_test)
   EXPECT_NEAR(obj_val, 11, 1e-5);
 }
 
+// TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST(mip_solve, mip_presolved_to_lp)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+  GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
+#endif
   auto [termination_status, obj_val, lb] = test_mps_file("mip/mip-presolved-to-lp.mps", 5, false);
   EXPECT_EQ(termination_status, mip_termination_status_t::Optimal);
   EXPECT_NEAR(obj_val, 0, 1e-5);

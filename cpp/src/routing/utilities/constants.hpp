@@ -10,7 +10,11 @@ namespace cuopt {
 namespace routing {
 namespace detail {
 
+#ifdef __HIP_PLATFORM_AMD__
+constexpr int warp_size  = 64;
+#else
 constexpr int warp_size  = 32;
+#endif
 constexpr int I_HALF_MAX = 65504;  // highest positive value representable by half
                                    // there is no numeric_limits implementation of half
 }  // namespace detail

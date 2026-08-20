@@ -279,7 +279,6 @@ void local_search_t<i_t, f_t, REQUEST>::run_best_local_search(solution_t<i_t, f_
       if (!sol.problem_ptr->special_nodes.is_empty() && perform_break_moves(sol)) { continue; }
       break;
     }
-
     sol.global_runtime_checks(
       should_all_nodes_be_served, false, "run_best_local_search_after_fast_search");
 

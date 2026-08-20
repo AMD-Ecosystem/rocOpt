@@ -34,7 +34,7 @@ class node_t {
  public:
   DI node_t() = delete;
 
-  DI node_t(const enabled_dimensions_t& dimensions_info_)
+  HDI node_t(const enabled_dimensions_t& dimensions_info_)
     : dimensions_info(dimensions_info_), capacity_dim(dimensions_info_.capacity_dim)
   {
   }

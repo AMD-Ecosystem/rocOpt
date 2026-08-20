@@ -60,6 +60,7 @@ class objective_function_test_t : public base_test_t<i_t, f_t>,
     data_model.set_order_service_times(this->service_time_d.data());
 
     cuopt::routing::solver_settings_t<i_t, f_t> settings;
+    settings.set_time_limit(30);
 
     // assumes that only one objective function is set along with primary cost with weight 1
     // a better way would be to implement storing all costs separately in assignment_t class

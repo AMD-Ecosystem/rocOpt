@@ -414,7 +414,10 @@ worker() {
             args="$args --method $METHOD"
         fi
 
-        CUDA_VISIBLE_DEVICES=$gpu_devices cuopt_cli "$mps_file" --time-limit $TIME_LIMIT $args
+        CUDA_VISIBLE_DEVICES=$gpu_devices cuopt_cli "$mps_file" --time-limit $TIME_LIMIT $args || {
+            exit_code=$?
+            echo "GPU(s) $gpu_devices: cuopt_cli exited with code $exit_code on $(basename "$mps_file"). Continuing to next instance..."
+        }
     done
 }
 

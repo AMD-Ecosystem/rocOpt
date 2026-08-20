@@ -6,6 +6,7 @@
  */
 /* clang-format on */
 #include <utilities/cuda_helpers.cuh>
+#include <routing/utilities/constants.hpp>
 #include "../solution/solution.cuh"
 #include "set_nodes_data.cuh"
 
@@ -226,7 +227,7 @@ void solution_t<i_t, f_t, REQUEST>::set_initial_nodes(const rmm::device_uvector<
                route_node_map.intra_route_idx_per_node.begin(),
                route_node_map.intra_route_idx_per_node.end(),
                -1);
-  constexpr i_t TPB = 32;
+  constexpr i_t TPB = warp_size;
   i_t n_blocks      = (desired_n_routes + TPB - 1) / TPB;
   set_initial_nodes_kernel<i_t, f_t, REQUEST>
     <<<n_blocks, TPB, 0, sol_handle->get_stream()>>>(view(), problem_ptr->view(), d_indices.data());
@@ -237,7 +238,7 @@ void solution_t<i_t, f_t, REQUEST>::set_initial_nodes(const rmm::device_uvector<
 template <typename i_t, typename f_t, request_t REQUEST>
 void solution_t<i_t, f_t, REQUEST>::set_nodes_data_of_solution()
 {
-  constexpr i_t TPB = 32;
+  constexpr i_t TPB = warp_size;
   i_t n_blocks      = n_routes;
   set_nodes_data_of_solution_kernel<i_t, f_t, REQUEST>
     <<<n_blocks, TPB, 0, sol_handle->get_stream()>>>(view(), problem_ptr->view());
@@ -246,7 +247,7 @@ void solution_t<i_t, f_t, REQUEST>::set_nodes_data_of_solution()
 template <typename i_t, typename f_t, request_t REQUEST>
 void solution_t<i_t, f_t, REQUEST>::set_nodes_data_of_route(i_t route_id)
 {
-  constexpr i_t TPB = 32;
+  constexpr i_t TPB = warp_size;
   set_nodes_data_of_route_kernel<i_t, f_t, REQUEST>
     <<<1, TPB, 0, sol_handle->get_stream()>>>(view(), problem_ptr->view(), route_id);
 }
@@ -255,7 +256,7 @@ template <typename i_t, typename f_t, request_t REQUEST>
 void solution_t<i_t, f_t, REQUEST>::set_nodes_data_of_new_routes(i_t added_routes,
                                                                  i_t prev_route_size)
 {
-  constexpr i_t TPB     = 32;
+  constexpr i_t TPB     = warp_size;
   i_t starting_route_id = prev_route_size;
   set_nodes_data_of_new_routes_kernel<i_t, f_t, REQUEST>
     <<<added_routes, TPB, 0, sol_handle->get_stream()>>>(

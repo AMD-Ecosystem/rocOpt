@@ -62,7 +62,7 @@ class vehicle_types_test_t : public base_test_t<i_t, f_t>, public ::testing::Tes
     data_model.set_vehicle_types(this->vehicle_types_d.data());
 
     cuopt::routing::solver_settings_t<i_t, f_t> settings;
-
+    settings.set_time_limit(30);
     auto routing_solution = this->solve(data_model, settings);
     int vehicles          = routing_solution.get_vehicle_count();
     double cost           = routing_solution.get_total_objective();

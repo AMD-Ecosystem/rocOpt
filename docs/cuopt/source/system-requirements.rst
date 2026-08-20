@@ -86,7 +86,7 @@ The above configuration will provide optimal performance for large-scale optimiz
 Container
 ---------
 
-* `nvidia-container-toolkit <https://docs.nvidia.com/ai-enterprise/deployment/vmware/latest/docker.html>`_ needs to be installed
+* A GPU-aware container runtime (see the `ROCm container runtime install guide <https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/docker.html>`_) needs to be installed
 
 
 Thin-client for Self-Hosted

@@ -220,7 +220,7 @@ INSTANTIATE_TEST_SUITE_P(
   MIPSolveTest,
   MIPSolveParametricTest,
   testing::Values(
-    // Bug: https://github.com/NVIDIA/cuopt/issues/214
+    // Bug: tests below are skipped pending an upstream fix; TODO(rocopt): track in the rocOpt issue tracker
     // std::make_tuple("50v-10.mps", 7800, 100000),
     // std::make_tuple("fiball.mps", 140, 25000),
     // std::make_tuple("rmatr200-p5.mps", 7000, 10000),

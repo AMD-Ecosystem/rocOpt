@@ -24,8 +24,35 @@
 namespace cuopt {
 namespace test {
 
+class debug_cuda_memory_resource final : public rmm::mr::device_memory_resource {
+ private:
+  void* do_allocate(std::size_t bytes, rmm::cuda_stream_view stream) override
+  {
+    void* ptr{nullptr};
+    auto err = hipMalloc(&ptr, bytes);
+    fprintf(stderr, "[debug_mr] hipMalloc(%zu bytes / %.2f GB) = %d (%s) -> %p\n",
+            bytes, bytes / 1e9, static_cast<int>(err),
+            err == hipSuccess ? "OK" : hipGetErrorString(err), ptr);
+    if (err != hipSuccess) {
+      throw rmm::out_of_memory{"hipMalloc failed for " + std::to_string(bytes) + " bytes"};
+    }
+    return ptr;
+  }
+  void do_deallocate(void* ptr, std::size_t bytes, rmm::cuda_stream_view) override
+  {
+    fprintf(stderr, "[debug_mr] hipFree(%p, %zu bytes)\n", ptr, bytes);
+    hipFree(ptr);
+  }
+  [[nodiscard]] bool do_is_equal(device_memory_resource const& other) const noexcept override
+  {
+    return dynamic_cast<debug_cuda_memory_resource const*>(&other) != nullptr;
+  }
+};
+
 /// MR factory functions
 inline auto make_cuda() { return std::make_shared<rmm::mr::cuda_memory_resource>(); }
+
+inline auto make_debug() { return std::make_shared<debug_cuda_memory_resource>(); }
 
 inline auto make_async() { return std::make_shared<rmm::mr::cuda_async_memory_resource>(); }
 
@@ -33,9 +60,8 @@ inline auto make_managed() { return std::make_shared<rmm::mr::managed_memory_res
 
 inline auto make_pool()
 {
-  // 1GB of initial pool size
-  const size_t initial_pool_size = 1024 * 1024 * 1024;
-  return rmm::mr::make_owning_wrapper<rmm::mr::pool_memory_resource>(make_async(),
+  const size_t initial_pool_size = 1024 * 1024 * 1024;  // 1 GB
+  return rmm::mr::make_owning_wrapper<rmm::mr::pool_memory_resource>(make_cuda(),
                                                                      initial_pool_size);
 }
 

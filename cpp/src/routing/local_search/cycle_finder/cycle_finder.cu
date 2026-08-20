@@ -34,9 +34,11 @@ bool ExactCycleFinder<i_t, f_t, max_routes>::call_init(graph_t<i_t, f_t>& graph)
   bool is_set     = set_shmem_of_kernel(init_kernel<i_t, f_t, max_routes>, sh_size);
   if (!is_set) { return false; }
 
+  CUOPT_KERNEL_TRACE("cycle_finder::init_kernel", "blocks=%d TPB=%d", n_blocks, n_threads);
   init_kernel<i_t, f_t, max_routes><<<n_blocks, n_threads, sh_size, handle_ptr->get_stream()>>>(
     graph.view(), d_valid_paths.subspan(level));
   RAFT_CHECK_CUDA(handle_ptr->get_stream());
+  CUOPT_KERNEL_SYNC_CHECK("cycle_finder::init_kernel", handle_ptr->get_stream());
   // we have a safe-guard in the kernel for the global array stores
   // do the safe guard here for the occupied size
   clamp_occupied<max_routes><<<1, 1, 0, handle_ptr->get_stream()>>>(d_valid_paths.subspan(level));
@@ -112,6 +114,7 @@ bool ExactCycleFinder<i_t, f_t, max_routes>::call_find(graph_t<i_t, f_t>& graph,
   bool last_level = level == (max_level - 1);
   if (last_level) {
     if (!set_shmem_of_kernel(find_kernel<i_t, f_t, max_routes, true>, sh_size)) { return false; }
+    CUOPT_KERNEL_TRACE("cycle_finder::find_kernel<last>", "blocks=%d TPB=%d level=%d", n_blocks, n_threads, level);
     find_kernel<i_t, f_t, max_routes, true>
       <<<n_blocks, n_threads, sh_size, handle_ptr->get_stream()>>>(
         level,
@@ -120,8 +123,11 @@ bool ExactCycleFinder<i_t, f_t, max_routes>::call_find(graph_t<i_t, f_t>& graph,
         d_valid_paths.subspan(level),
         cycle_candidates.level_view(level),
         depot_included);
+    RAFT_CHECK_CUDA(handle_ptr->get_stream());
+    CUOPT_KERNEL_SYNC_CHECK("cycle_finder::find_kernel<last>", handle_ptr->get_stream());
   } else {
     if (!set_shmem_of_kernel(find_kernel<i_t, f_t, max_routes, false>, sh_size)) { return false; }
+    CUOPT_KERNEL_TRACE("cycle_finder::find_kernel", "blocks=%d TPB=%d level=%d", n_blocks, n_threads, level);
     find_kernel<i_t, f_t, max_routes, false>
       <<<n_blocks, n_threads, sh_size, handle_ptr->get_stream()>>>(
         level,
@@ -130,9 +136,9 @@ bool ExactCycleFinder<i_t, f_t, max_routes>::call_find(graph_t<i_t, f_t>& graph,
         d_valid_paths.subspan(level),
         cycle_candidates.level_view(level),
         depot_included);
+    RAFT_CHECK_CUDA(handle_ptr->get_stream());
+    CUOPT_KERNEL_SYNC_CHECK("cycle_finder::find_kernel", handle_ptr->get_stream());
   }
-
-  RAFT_CHECK_CUDA(handle_ptr->get_stream());
   return true;
 }
 

@@ -75,6 +75,7 @@ void load_tsp(std::string const& fname, Route<i_t, f_t>& input)
 {
   std::fstream fs;
   fs.open(fname);
+  cuopt_assert(fs.is_open(), "File cannot be opened: " + fname);
   std::string line;
   std::vector<std::string> tokens;
   input.n_vehicles = 1;
@@ -85,8 +86,7 @@ void load_tsp(std::string const& fname, Route<i_t, f_t>& input)
   }
 
   i_t dump, city_id = 0;
-  i_t cities_size = input.cities.size();
-  while (cities_size < input.n_locations) {
+  while (static_cast<i_t>(input.cities.size()) < input.n_locations) {
     f_t x, y;
 
     fs >> dump;
@@ -128,8 +128,7 @@ void load_cvrp(const std::string& fname, Route<i_t, f_t>& input)
   input.capacity_h.assign(input.n_vehicles, capacity);
 
   i_t dump, city_id = 0;
-  i_t cities_size = input.cities.size();
-  while (cities_size < input.n_locations) {
+  while (static_cast<i_t>(input.cities.size()) < input.n_locations) {
     f_t x, y;
 
     fs >> dump;
@@ -147,8 +146,7 @@ void load_cvrp(const std::string& fname, Route<i_t, f_t>& input)
 
   std::string tmp;
   fs >> tmp;
-  i_t demand_size = input.demand_h.size();
-  while (demand_size < input.n_locations) {
+  while (static_cast<i_t>(input.demand_h.size()) < input.n_locations) {
     i_t city_id, demand;
     fs >> city_id;
     fs >> demand;
@@ -162,6 +160,7 @@ void load_acvrp(const std::string& fname, Route<i_t, f_t>& input)
 {
   std::fstream fs;
   fs.open(fname);
+  cuopt_assert(fs.is_open(), "File cannot be opened: " + fname);
   std::string line;
   std::vector<std::string> tokens;
   i_t capacity{};
@@ -194,8 +193,7 @@ void load_acvrp(const std::string& fname, Route<i_t, f_t>& input)
 
   std::string tmp;
   fs >> tmp;
-  i_t demand_size = input.demand_h.size();
-  while (demand_size < input.n_locations) {
+  while (static_cast<i_t>(input.demand_h.size()) < input.n_locations) {
     i_t city_id, demand;
     fs >> city_id;
     fs >> demand;

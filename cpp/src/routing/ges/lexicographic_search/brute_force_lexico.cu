@@ -10,6 +10,7 @@
 #include "../ejection_pool.cuh"
 #include "../guided_ejection_search.cuh"
 #include "lexicographic_search.cuh"
+#include <routing/utilities/constants.hpp>
 
 #include <algorithm>
 
@@ -131,25 +132,21 @@ __global__ void brute_force_lexico_kernel(
           min_p_score = curr_p_score;
           atomicMin(global_min_p,
                     bit_cast<uint32_t, p_val_seq_t>(p_val_seq_t(curr_p_score, counter)));
-          while (atomicExch(solution.lock, 1) != 0)
-            ;  // acquire
-          __threadfence();
-          if (global_min_p[0] ==
-              bit_cast<uint32_t, p_val_seq_t>(p_val_seq_t(curr_p_score, counter))) {
-            cuopt_assert(curr_p_score > 0, "P score should be greater than 0 ");
-            cuopt_assert(curr_p_score < p_scores[request_id->info.node()],
-                         "P score should be smaller or equal than requests ");
-            // Sad uncoallsced global writes of route then the thread found best sequence
-            global_sequence[0] = counter;
-            global_sequence[1] = curr_p_score;
-            global_sequence[2] = pickup_idx;
-            global_sequence[3] = delivery_idx;
-            for (i_t i = 0; i < counter; ++i) {
-              global_sequence[i + 4] = sequence_including_delivery.s[i];
+          with_lock(solution.lock, [&]() {
+            if (global_min_p[0] ==
+                bit_cast<uint32_t, p_val_seq_t>(p_val_seq_t(curr_p_score, counter))) {
+              cuopt_assert(curr_p_score > 0, "P score should be greater than 0 ");
+              cuopt_assert(curr_p_score < p_scores[request_id->info.node()],
+                           "P score should be smaller or equal than requests ");
+              global_sequence[0] = counter;
+              global_sequence[1] = curr_p_score;
+              global_sequence[2] = pickup_idx;
+              global_sequence[3] = delivery_idx;
+              for (i_t i = 0; i < counter; ++i) {
+                global_sequence[i + 4] = sequence_including_delivery.s[i];
+              }
             }
-          }
-          __threadfence();
-          *(solution.lock) = 0;  // release
+          });
         }
       }
     }
@@ -183,7 +180,7 @@ std::vector<i_t> guided_ejection_search_t<i_t, f_t, REQUEST>::brute_force_lexico
   solution_t<i_t, f_t, REQUEST>& sol, request_info_t<i_t, REQUEST>* __restrict__ req)
 {
   auto stream          = sol.sol_handle->get_stream();
-  i_t TPB              = 32;
+  i_t TPB              = warp_size;
   const i_t zero       = 0;
   const auto value_max = std::numeric_limits<typename decltype(global_min_p_)::value_type>::max();
   sol.d_lock.set_value_async(zero, stream);
@@ -202,6 +199,7 @@ std::vector<i_t> guided_ejection_search_t<i_t, f_t, REQUEST>::brute_force_lexico
       size_t shared_size_for_intra_indices = (sol.get_num_orders()) * 2 * sizeof(i_t);
       size_t shared_size                   = shared_size_for_route + shared_size_for_intra_indices;
       i_t n_blocks                         = combinations.size();
+      CUOPT_KERNEL_TRACE("brute_force_lexico_kernel", "blocks=%d TPB=%d", n_blocks, TPB);
       brute_force_lexico_kernel<i_t, f_t, REQUEST>
         <<<n_blocks, TPB, shared_size, stream>>>(d_combinations.data(),
                                                  sol.view(),
@@ -212,8 +210,8 @@ std::vector<i_t> guided_ejection_search_t<i_t, f_t, REQUEST>::brute_force_lexico
                                                  global_sequence.data(),
                                                  EP.view(),
                                                  p_scores_.data());
-      // copy the best result and keep it here
-      sol.sol_handle->sync_stream();
+      RAFT_CHECK_CUDA(stream);
+      CUOPT_KERNEL_SYNC_CHECK("brute_force_lexico_kernel", stream);
     }
   }
   if (global_min_p.value(stream) != value_max) {
