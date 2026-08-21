@@ -16,7 +16,6 @@ subtrees:
   entries:
   - file: reference/c-api-reference.rst
   - file: reference/python-api-reference.rst
-    title: Python API
   - file: reference/mps-parser-api-reference.rst
   - file: reference/server-api-reference.rst
 

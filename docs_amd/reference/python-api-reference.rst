@@ -110,13 +110,6 @@ PDLP solution
 ``PdlpSolverSolution``
    Container for the PDLP solver solution, including primal and dual variable values, objective value, and convergence information.
 
-Algebraic modeling API
-----------------------
-
-.. note::
-
-   The source material does not contain sufficient detail about the algebraic modeling API surface in the ``cuopt`` Python package. This section requires additional source material to document the modeling classes (variables, expressions, constraints, and model) and their methods.
-
 MPS parser
 ----------
 
@@ -139,7 +132,7 @@ Vehicle routing
 
 The vehicle routing Python API provides classes for defining and solving vehicle routing problems, including TSP, VRP, and pickup-and-delivery problems. These classes wrap the C++ routing API through Cython bindings.
 
-For a complete walkthrough, see :doc:`/tutorials/vrp-example`.
+For a complete walkthrough, see :doc:`../examples/rocopt-examples`.
 
 DataModelView
 -------------

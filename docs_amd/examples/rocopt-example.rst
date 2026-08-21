@@ -8,7 +8,7 @@
 rocOpt examples
 ********************************************************************
 
-The rocOpt examples can be found in GituHub under the https://github.com/AMD-Ecosystem/rocopt/tree/amd-integration/examples_notebook folder.
+The rocOpt examples can be found in GitHub under the https://github.com/AMD-Ecosystem/rocopt/tree/amd-integration/examples_notebook folder.
 The examples include the following three notebooks to demonstrate vehicle routing problems, large-scale linear programming, and mixed-integer
 linear programming. 
 

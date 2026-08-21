@@ -2,9 +2,9 @@
    :description: Comprehensive C API reference for rocopt covering LP, MILP, and QP problem construction, solving, and result retrieval.
    :keywords: rocopt, C API, LP, MILP, QP, linear programming, mixed integer programming, quadratic programming, ROCm, API reference
 
-===============
+*******************
 C/C++ API reference
-===============
+*******************
 
 This page provides a comprehensive reference for the rocopt C API, which is the primary stable public interface for LP, MILP, and QP problem setup and solving from non-C++ environments. The C API is declared in ``cuopt_c.h`` and depends on constants from ``constants.h`` and error types from ``error.hpp``.
 
@@ -15,7 +15,7 @@ This page provides a comprehensive reference for the rocopt C API, which is the 
 For a working example using this API, see :doc:`/examples/rocopt-example`.
 
 Constants and status codes
-**************************
+==========================
 
 These constants are defined in ``constants.h`` and are used throughout the C API for infinity bounds, optimization sense, and solver termination status.
 
@@ -30,7 +30,7 @@ The constants header provides:
 - Solver status codes: returned by the solve function to indicate optimality, infeasibility, unboundedness, time limit, or other termination conditions.
 
 Error handling
-**************
+==============
 
 The error types defined in ``error.hpp`` are shared across the C and C++ APIs.
 
@@ -45,7 +45,7 @@ The error types defined in ``error.hpp`` are shared across the C and C++ APIs.
    The source material does not contain the full enumeration values for ``cuoptError_t``. Consult the installed ``error.hpp`` header for the complete list of error codes.
 
 C API for linear programming
-****************************
+============================
 
 The functions below are declared in ``cuopt_c.h`` and provide the complete lifecycle for constructing, configuring, solving, and querying LP, MILP, and QP problems.
 
@@ -265,8 +265,6 @@ Solving
    :param handle: A valid solver handle with a fully specified problem.
    :returns: ``cuoptError_t`` indicating success or the error that occurred. Use the solution query functions to retrieve detailed status and results.
 
-For details on how the solver selects the algorithm, see :doc:`/conceptual/solver-architecture`.
-
 Solution retrieval
 ------------------
 
@@ -364,7 +362,7 @@ MPS file loading
    The function signatures and parameter names documented above are based on the expected public API patterns of ``cuopt_c.h``. The full source contents of this header were not available in the source material. Consult the installed header for exact signatures, additional functions, and detailed documentation comments.
 
 Typical usage pattern
-*********************
+=====================
 
 The following pseudocode illustrates the typical lifecycle of using the C API:
 

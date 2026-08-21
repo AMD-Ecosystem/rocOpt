@@ -5,7 +5,7 @@
 .. _install-rocopt:
 
 ********************************************************************
-Run rocOpt with ROCm 7.2.3 enabled
+Installing and running rocOpt with ROCm 7.2.3 enabled
 ********************************************************************
 
 To run rocOpt with ROCm 7.2.3 enabled, you have two options to set up the Docker container:
@@ -20,7 +20,7 @@ Compatibility Matrix
 
 .. list-table::
    :header-rows: 1
-   :widths: 12 18 18 22 18
+   :widths: 12 18 18 22 18 18
 
    * - rocOpt version
      - Ubuntu
