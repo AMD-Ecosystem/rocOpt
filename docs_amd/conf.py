@@ -48,7 +48,7 @@ all_article_info_author = ""
 external_projects_current_project = "rocopt"
 
 html_context = {
-    "docs_header_version": "26.05"
+    "docs_header_version": "26.07"
 }
 html_theme = "rocm_docs_theme"
 html_theme_options = {
