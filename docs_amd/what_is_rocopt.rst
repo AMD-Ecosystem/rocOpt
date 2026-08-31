@@ -48,7 +48,7 @@ the ROCm 7.2.3 runtime. This includes the following features:
   - Server API — serve optimization requests over HTTP with a cuOpt-compatible
     interface.
 
-- rocOpt is built on the ROCm Data Science (ROCm-DS) stack — a HIP port of NVIDIA's
+- rocOpt is built on the ROCm Data Science (ROCm-DS) stack — a HIP port
   cuOpt that maps RAPIDS-style dependencies to their ROCm equivalents (hipRAFT, hipMM,
   rocThrust, hipCUB, rocPRIM, hipSPARSE, hipBLAS, hipSOLVER) so workloads run on
   AMD Instinct hardware alongside other ROCm-DS libraries such as hipDF.
@@ -63,6 +63,6 @@ the ROCm 7.2.3 runtime. This includes the following features:
 
 .. note::
 
-   The Barrier (interior-point) LP solver depends on the NVIDIA cuDSS sparse direct
+   The Barrier (interior-point) LP solver depends on the cuDSS sparse direct
    solver, and has no ROCm equivalent in this release. Use PDLP for large LPs and
    dual simplex for smaller problems.
