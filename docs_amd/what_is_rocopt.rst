@@ -14,7 +14,7 @@ mixed-integer linear programming (MILP), quadratic programming (QP), and vehicle
 problems containing millions of variables and constraints, returning near real-time results on
 AMD Instinct MI300X and MI355X GPUs through the ROCm software stack.
 
-rocOpt is aligned with and API-compatible with NVIDIA cuOpt 25.10, so you can run
+rocOpt is aligned with and API-compatible with cuOpt 25.10, so you can run
 existing cuOpt workloads and optimization pipelines on AMD Instinct GPUs without
 rewriting client code.
 
