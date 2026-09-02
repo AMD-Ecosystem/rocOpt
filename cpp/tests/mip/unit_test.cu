@@ -8,63 +8,118 @@
 #include "../linear_programming/utilities/pdlp_test_utilities.cuh"
 #include "mip_utils.cuh"
 
-#include <cuopt/mathematical_optimization/io/parser.hpp>
-#include <cuopt/mathematical_optimization/solve.hpp>
-#include <mip_heuristics/mip_scaling_strategy.cuh>
-#include <pdlp/utilities/problem_checking.cuh>
+#include <cuopt/linear_programming/solve.hpp>
+#include <mps_parser/parser.hpp>
 #include <utilities/common_utils.hpp>
 #include <utilities/copy_helpers.hpp>
-#include <utilities/inline_lp_test_utils.hpp>
+#include <utilities/error.hpp>
 
 #include <raft/core/handle.hpp>
+#include <raft/util/cudart_utils.hpp>
 
 #include <gtest/gtest.h>
 
-namespace cuopt::mathematical_optimization::test {
+#include <cstdint>
+#include <sstream>
+#include <string>
+#include <vector>
 
-io::mps_data_model_t<int, double> create_std_lp_problem()
-{
-  return cuopt::test::parse_inline_lp(R"LP(
-Minimize
-  obj: 1.2 x1 + 1.7 x2
-Subject To
-  c1_ub: x1 + x2 <= 5000
-  c1_lb: x1 + x2 >= 0
-Bounds
-  0 <= x1 <= 3000
-  0 <= x2 <= 5000
-End
-)LP");
-}
+namespace cuopt::linear_programming::test {
 
-io::mps_data_model_t<int, double> create_single_var_lp_problem()
+// Create standard LP test problem matching Python test
+mps_parser::mps_data_model_t<int, double> create_std_lp_problem()
 {
-  return cuopt::test::parse_inline_lp(R"LP(
-Minimize
-  obj: -0.23 x
-Subject To
-  c1: x = 0
-Bounds
-  x = 0
-End
-)LP");
-}
+  mps_parser::mps_data_model_t<int, double> problem;
 
-io::mps_data_model_t<int, double> create_std_milp_problem(bool maximize)
-{
-  auto problem = create_std_lp_problem();
-  problem.set_maximize(maximize);
-  std::vector<char> var_types = {'I', 'C'};
-  problem.set_variable_types(var_types);
+  // Set up constraint matrix in CSR format
+  std::vector<int> offsets         = {0, 2};
+  std::vector<int> indices         = {0, 1};
+  std::vector<double> coefficients = {1.0, 1.0};
+  problem.set_csr_constraint_matrix(coefficients.data(),
+                                    coefficients.size(),
+                                    indices.data(),
+                                    indices.size(),
+                                    offsets.data(),
+                                    offsets.size());
+
+  // Set constraint bounds
+  std::vector<double> lower_bounds = {0.0};
+  std::vector<double> upper_bounds = {5000.0};
+  problem.set_constraint_lower_bounds(lower_bounds.data(), lower_bounds.size());
+  problem.set_constraint_upper_bounds(upper_bounds.data(), upper_bounds.size());
+
+  // Set variable bounds
+  std::vector<double> var_lower = {0.0, 0.0};
+  std::vector<double> var_upper = {3000.0, 5000.0};
+  problem.set_variable_lower_bounds(var_lower.data(), var_lower.size());
+  problem.set_variable_upper_bounds(var_upper.data(), var_upper.size());
+
+  // Set objective coefficients
+  std::vector<double> obj_coeffs = {1.2, 1.7};
+  problem.set_objective_coefficients(obj_coeffs.data(), obj_coeffs.size());
+  problem.set_maximize(false);
+
   return problem;
 }
 
-io::mps_data_model_t<int, double> create_single_var_milp_problem(bool maximize)
+mps_parser::mps_data_model_t<int, double> create_single_var_lp_problem()
+{
+  mps_parser::mps_data_model_t<int, double> problem;
+
+  // Set up constraint matrix in CSR format
+  std::vector<int> offsets         = {0, 1};
+  std::vector<int> indices         = {0};
+  std::vector<double> coefficients = {1.0};
+  problem.set_csr_constraint_matrix(coefficients.data(),
+                                    coefficients.size(),
+                                    indices.data(),
+                                    indices.size(),
+                                    offsets.data(),
+                                    offsets.size());
+
+  // Set constraint bounds
+  std::vector<double> lower_bounds = {0.0};
+  std::vector<double> upper_bounds = {0.0};
+  problem.set_constraint_lower_bounds(lower_bounds.data(), lower_bounds.size());
+  problem.set_constraint_upper_bounds(upper_bounds.data(), upper_bounds.size());
+
+  // Set variable bounds
+  std::vector<double> var_lower = {0.0};
+  std::vector<double> var_upper = {0.0};
+  problem.set_variable_lower_bounds(var_lower.data(), var_lower.size());
+  problem.set_variable_upper_bounds(var_upper.data(), var_upper.size());
+
+  // Set objective coefficients
+  std::vector<double> obj_coeffs = {-0.23};
+  problem.set_objective_coefficients(obj_coeffs.data(), obj_coeffs.size());
+  problem.set_maximize(false);
+
+  return problem;
+}
+
+// Create standard MILP test problem matching Python test
+mps_parser::mps_data_model_t<int, double> create_std_milp_problem(bool maximize)
+{
+  auto problem = create_std_lp_problem();
+
+  // Set variable types for MILP
+  std::vector<char> var_types = {'I', 'C'};
+  problem.set_variable_types(var_types);
+  problem.set_maximize(maximize);
+
+  return problem;
+}
+
+// Create standard MILP test problem matching Python test
+mps_parser::mps_data_model_t<int, double> create_single_var_milp_problem(bool maximize)
 {
   auto problem = create_single_var_lp_problem();
-  problem.set_maximize(maximize);
+
+  // Set variable types for MILP
   std::vector<char> var_types = {'I'};
   problem.set_variable_types(var_types);
+  problem.set_maximize(maximize);
+
   return problem;
 }
 
@@ -72,27 +127,56 @@ TEST(LPTest, TestSampleLP2)
 {
   raft::handle_t handle;
 
-  // Two identical row constraints exercise duplicate-row handling.
-  auto problem = cuopt::test::parse_inline_lp(R"LP(
-Minimize
-  obj: x
-Subject To
-  c1: x <= 1
-  c2: x <= 1
-End
-)LP");
+  // Construct a simple LP problem:
+  // Minimize:    x
+  // Subject to:  x <= 1
+  //              x <= 1
+  //              x >= 0
 
-  cuopt::mathematical_optimization::pdlp_solver_settings_t<int, double> settings{};
+  // One variable, two constraints (both x <= 1)
+  std::vector<double> A_values = {1.0, 1.0};
+  std::vector<int> A_indices   = {0, 0};
+  std::vector<int> A_offsets   = {0, 1, 2};  // CSR: 2 constraints, 1 variable
+
+  std::vector<double> b       = {1.0, 1.0};  // RHS for both constraints
+  std::vector<double> b_lower = {-std::numeric_limits<double>::infinity(),
+                                 -std::numeric_limits<double>::infinity()};
+
+  std::vector<double> c = {1.0};  // Objective: Minimize x
+
+  std::vector<char> row_types = {'L', 'L'};  // Both constraints are <=
+
+  // Build the problem
+  mps_parser::mps_data_model_t<int, double> problem;
+  problem.set_csr_constraint_matrix(A_values.data(),
+                                    A_values.size(),
+                                    A_indices.data(),
+                                    A_indices.size(),
+                                    A_offsets.data(),
+                                    A_offsets.size());
+  problem.set_constraint_upper_bounds(b.data(), b.size());
+  problem.set_constraint_lower_bounds(b_lower.data(), b_lower.size());
+
+  // Set variable bounds (x >= 0)
+  std::vector<double> var_lower = {0.0};
+  std::vector<double> var_upper = {std::numeric_limits<double>::infinity()};
+  problem.set_variable_lower_bounds(var_lower.data(), var_lower.size());
+  problem.set_variable_upper_bounds(var_upper.data(), var_upper.size());
+
+  problem.set_objective_coefficients(c.data(), c.size());
+  problem.set_maximize(false);
+  // Set up solver settings
+  cuopt::linear_programming::pdlp_solver_settings_t<int, double> settings{};
   settings.set_optimality_tolerance(1e-2);
-  settings.method     = cuopt::mathematical_optimization::method_t::PDLP;
+  settings.method     = cuopt::linear_programming::method_t::PDLP;
   settings.time_limit = 5;
 
   // Solve
-  auto result = cuopt::mathematical_optimization::solve_lp(&handle, problem, settings);
+  auto result = cuopt::linear_programming::solve_lp(&handle, problem, settings);
 
   // Check results
   EXPECT_EQ(result.get_termination_status(),
-            cuopt::mathematical_optimization::pdlp_termination_status_t::Optimal);
+            cuopt::linear_programming::pdlp_termination_status_t::Optimal);
   ASSERT_EQ(result.get_primal_solution().size(), 1);
 
   // Copy solution to host to access values
@@ -108,15 +192,15 @@ TEST(LPTest, TestSampleLP)
   raft::handle_t handle;
   auto problem = create_std_lp_problem();
 
-  cuopt::mathematical_optimization::pdlp_solver_settings_t<int, double> settings{};
+  cuopt::linear_programming::pdlp_solver_settings_t<int, double> settings{};
   settings.set_optimality_tolerance(1e-4);
   settings.time_limit = 5;
-  settings.presolver  = cuopt::mathematical_optimization::presolver_t::None;
+  settings.presolve   = false;
 
-  auto result = cuopt::mathematical_optimization::solve_lp(&handle, problem, settings);
+  auto result = cuopt::linear_programming::solve_lp(&handle, problem, settings);
 
   EXPECT_EQ(result.get_termination_status(),
-            cuopt::mathematical_optimization::pdlp_termination_status_t::Optimal);
+            cuopt::linear_programming::pdlp_termination_status_t::Optimal);
 }
 
 TEST(ErrorTest, TestError)
@@ -124,25 +208,25 @@ TEST(ErrorTest, TestError)
   raft::handle_t handle;
   auto problem = create_std_milp_problem(false);
 
-  cuopt::mathematical_optimization::mip_solver_settings_t<int, double> settings{};
+  cuopt::linear_programming::mip_solver_settings_t<int, double> settings{};
   settings.time_limit = 5;
-  settings.presolver  = cuopt::mathematical_optimization::presolver_t::None;
+  settings.presolve   = false;
 
   // Set constraint bounds
   std::vector<double> lower_bounds = {1.0};
   std::vector<double> upper_bounds = {1.0, 1.0};
-  problem.set_constraint_lower_bounds(lower_bounds);
-  problem.set_constraint_upper_bounds(upper_bounds);
+  problem.set_constraint_lower_bounds(lower_bounds.data(), lower_bounds.size());
+  problem.set_constraint_upper_bounds(upper_bounds.data(), upper_bounds.size());
 
-  auto result = cuopt::mathematical_optimization::solve_mip(&handle, problem, settings);
+  auto result = cuopt::linear_programming::solve_mip(&handle, problem, settings);
 
   EXPECT_EQ(result.get_termination_status(),
-            cuopt::mathematical_optimization::mip_termination_status_t::NoTermination);
+            cuopt::linear_programming::mip_termination_status_t::NoTermination);
 }
 
 class MILPTestParams
   : public testing::TestWithParam<
-      std::tuple<bool, int, bool, cuopt::mathematical_optimization::mip_termination_status_t>> {};
+      std::tuple<bool, bool, bool, cuopt::linear_programming::mip_termination_status_t>> {};
 
 // TODO(ROCm): MIP concurrent solver calls Barrier which requires cuDSS.
 TEST_P(MILPTestParams, TestSampleMILP)
@@ -151,20 +235,20 @@ TEST_P(MILPTestParams, TestSampleMILP)
   GTEST_SKIP() << "MIP solver uses Barrier internally, which requires cuDSS (not available on ROCm).";
 #endif
   bool maximize                    = std::get<0>(GetParam());
-  int scaling                      = std::get<1>(GetParam());
+  bool scaling                     = std::get<1>(GetParam());
   bool heuristics_only             = std::get<2>(GetParam());
   auto expected_termination_status = std::get<3>(GetParam());
 
   raft::handle_t handle;
   auto problem = create_std_milp_problem(maximize);
 
-  cuopt::mathematical_optimization::mip_solver_settings_t<int, double> settings{};
+  cuopt::linear_programming::mip_solver_settings_t<int, double> settings{};
   settings.time_limit      = 5;
   settings.mip_scaling     = scaling;
   settings.heuristics_only = heuristics_only;
-  settings.presolver       = cuopt::mathematical_optimization::presolver_t::None;
+  settings.presolve        = false;
 
-  auto result = cuopt::mathematical_optimization::solve_mip(&handle, problem, settings);
+  auto result = cuopt::linear_programming::solve_mip(&handle, problem, settings);
 
   EXPECT_EQ(result.get_termination_status(), expected_termination_status);
 }
@@ -172,174 +256,35 @@ TEST_P(MILPTestParams, TestSampleMILP)
 TEST_P(MILPTestParams, TestSingleVarMILP)
 {
   bool maximize                    = std::get<0>(GetParam());
-  int scaling                      = std::get<1>(GetParam());
+  bool scaling                     = std::get<1>(GetParam());
   bool heuristics_only             = std::get<2>(GetParam());
   auto expected_termination_status = std::get<3>(GetParam());
 
   raft::handle_t handle;
   auto problem = create_single_var_milp_problem(maximize);
 
-  cuopt::mathematical_optimization::mip_solver_settings_t<int, double> settings{};
+  cuopt::linear_programming::mip_solver_settings_t<int, double> settings{};
   settings.time_limit      = 5;
   settings.mip_scaling     = scaling;
   settings.heuristics_only = heuristics_only;
-  settings.presolver       = cuopt::mathematical_optimization::presolver_t::None;
+  settings.presolve        = false;
 
-  auto result = cuopt::mathematical_optimization::solve_mip(&handle, problem, settings);
+  auto result = cuopt::linear_programming::solve_mip(&handle, problem, settings);
 
   EXPECT_EQ(result.get_termination_status(),
-            cuopt::mathematical_optimization::mip_termination_status_t::Optimal);
+            cuopt::linear_programming::mip_termination_status_t::Optimal);
 }
 
 INSTANTIATE_TEST_SUITE_P(
   MILPTests,
   MILPTestParams,
   testing::Values(
-    std::make_tuple(true,
-                    CUOPT_MIP_SCALING_ON,
-                    true,
-                    cuopt::mathematical_optimization::mip_termination_status_t::Optimal),
-    std::make_tuple(false,
-                    CUOPT_MIP_SCALING_ON,
-                    false,
-                    cuopt::mathematical_optimization::mip_termination_status_t::Optimal),
-    std::make_tuple(true,
-                    CUOPT_MIP_SCALING_OFF,
-                    true,
-                    cuopt::mathematical_optimization::mip_termination_status_t::Optimal),
-    std::make_tuple(false,
-                    CUOPT_MIP_SCALING_OFF,
-                    false,
-                    cuopt::mathematical_optimization::mip_termination_status_t::Optimal)));
+    std::make_tuple(true, true, true, cuopt::linear_programming::mip_termination_status_t::Optimal),
+    std::make_tuple(
+      false, true, false, cuopt::linear_programming::mip_termination_status_t::Optimal),
+    std::make_tuple(
+      true, false, true, cuopt::linear_programming::mip_termination_status_t::Optimal),
+    std::make_tuple(
+      false, false, false, cuopt::linear_programming::mip_termination_status_t::Optimal)));
 
-// ---------------------------------------------------------------------------
-// Scaling integrality preservation test
-// ---------------------------------------------------------------------------
-
-// Coefficient spread (~log2(100000/1) ≈ 17) exceeds the scaler's 12-threshold
-// so the scaling path is exercised; row 4 omits x3 so the integer-only row
-// stays integer.
-static io::mps_data_model_t<int, double> create_wide_spread_milp()
-{
-  return cuopt::test::parse_inline_lp(R"LP(
-Minimize
-  obj: x0 + 2 x1 + 3 x2 + 0.5 x3
-Subject To
-  c0: 3 x0 + 7 x1 + 2 x2 + 1.5 x3 <= 1e6
-  c1: 100000 x0 + 50000 x1 + 25000 x2 + 999.9 x3 <= 1e8
-  c2: 5 x0 + 11 x1 + 13 x2 + 0.3 x3 <= 1e4
-  c3: 60000 x0 + 30000 x1 + 9000 x2 + 42.42 x3 <= 1e8
-  c4: x0 + x1 + x2 <= 100
-  c5: 8 x0 + 4 x1 + 6 x2 + 3.14 x3 <= 1e4
-Bounds
-  0 <= x0 <= 1000
-  0 <= x1 <= 1000
-  0 <= x2 <= 1000
-  0 <= x3 <= 1e6
-Generals
-  x0
-  x1
-  x2
-End
-)LP");
-}
-
-TEST(ScalingIntegrity, IntegerCoefficientsPreservedAfterScaling)
-{
-  raft::handle_t handle;
-  auto mps_problem = create_wide_spread_milp();
-  auto op_problem  = mps_data_model_to_optimization_problem(&handle, mps_problem);
-  problem_checking_t<int, double>::check_problem_representation(op_problem);
-
-  const int nnz = op_problem.get_nnz();
-
-  auto pre_values =
-    cuopt::host_copy(op_problem.get_constraint_matrix_values(), handle.get_stream());
-  auto col_indices =
-    cuopt::host_copy(op_problem.get_constraint_matrix_indices(), handle.get_stream());
-  auto var_types = cuopt::host_copy(op_problem.get_variable_types(), handle.get_stream());
-  handle.sync_stream();
-
-  std::vector<bool> was_integer(nnz, false);
-  for (int k = 0; k < nnz; ++k) {
-    int col = col_indices[k];
-    if (var_types[col] == var_t::INTEGER) {
-      double abs_val = std::abs(pre_values[k]);
-      if (abs_val > 0.0 &&
-          std::abs(abs_val - std::round(abs_val)) <= 1e-6 * std::max(1.0, abs_val)) {
-        was_integer[k] = true;
-      }
-    }
-  }
-
-  mip::mip_scaling_strategy_t<int, double> scaling(op_problem);
-  scaling.scale_problem();
-
-  auto post_values =
-    cuopt::host_copy(op_problem.get_constraint_matrix_values(), handle.get_stream());
-  handle.sync_stream();
-
-  int violations = 0;
-  for (int k = 0; k < nnz; ++k) {
-    if (!was_integer[k]) { continue; }
-    double abs_val  = std::abs(post_values[k]);
-    double frac_err = std::abs(abs_val - std::round(abs_val));
-    double rel_tol  = 1e-6 * std::max(1.0, abs_val);
-    if (frac_err > rel_tol) {
-      ++violations;
-      ADD_FAILURE() << "Coefficient [" << k << "] col=" << col_indices[k] << " was integer ("
-                    << pre_values[k] << ") but after scaling is " << post_values[k]
-                    << " (frac_err=" << frac_err << ")";
-    }
-  }
-  EXPECT_EQ(violations, 0) << violations << " integer coefficients lost integrality after scaling";
-}
-
-TEST(ScalingIntegrity, NoObjectiveScalingPreservesIntegerCoefficients)
-{
-  raft::handle_t handle;
-  auto mps_problem = create_wide_spread_milp();
-  auto op_problem  = mps_data_model_to_optimization_problem(&handle, mps_problem);
-  problem_checking_t<int, double>::check_problem_representation(op_problem);
-
-  const int nnz = op_problem.get_nnz();
-
-  auto pre_values =
-    cuopt::host_copy(op_problem.get_constraint_matrix_values(), handle.get_stream());
-  auto col_indices =
-    cuopt::host_copy(op_problem.get_constraint_matrix_indices(), handle.get_stream());
-  auto var_types = cuopt::host_copy(op_problem.get_variable_types(), handle.get_stream());
-  handle.sync_stream();
-
-  std::vector<bool> was_integer(nnz, false);
-  for (int k = 0; k < nnz; ++k) {
-    int col = col_indices[k];
-    if (var_types[col] == var_t::INTEGER) {
-      double abs_val = std::abs(pre_values[k]);
-      if (abs_val > 0.0 &&
-          std::abs(abs_val - std::round(abs_val)) <= 1e-6 * std::max(1.0, abs_val)) {
-        was_integer[k] = true;
-      }
-    }
-  }
-
-  mip::mip_scaling_strategy_t<int, double> scaling(op_problem);
-  scaling.scale_problem(/*scale_objective=*/false);
-
-  auto post_values =
-    cuopt::host_copy(op_problem.get_constraint_matrix_values(), handle.get_stream());
-  handle.sync_stream();
-
-  int violations = 0;
-  for (int k = 0; k < nnz; ++k) {
-    if (!was_integer[k]) { continue; }
-    double abs_val  = std::abs(post_values[k]);
-    double frac_err = std::abs(abs_val - std::round(abs_val));
-    double rel_tol  = 1e-6 * std::max(1.0, abs_val);
-    if (frac_err > rel_tol) { ++violations; }
-  }
-  EXPECT_EQ(violations, 0) << violations
-                           << " integer coefficients lost integrality after scaling (no-obj mode)";
-}
-
-}  // namespace cuopt::mathematical_optimization::test
+}  // namespace cuopt::linear_programming::test

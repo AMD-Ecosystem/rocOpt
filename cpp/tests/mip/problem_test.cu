@@ -8,12 +8,12 @@
 
 #include "../linear_programming/utilities/pdlp_test_utilities.cuh"
 
-#include <cuopt/mathematical_optimization/io/mps_data_model.hpp>
-#include <cuopt/mathematical_optimization/io/parser.hpp>
-#include <cuopt/mathematical_optimization/solve.hpp>
-#include <mip_heuristics/presolve/trivial_presolve.cuh>
-#include <mip_heuristics/problem/problem.cuh>
-#include <pdlp/utils.cuh>
+#include <cuopt/linear_programming/solve.hpp>
+#include <linear_programming/utils.cuh>
+#include <mip/presolve/trivial_presolve.cuh>
+#include <mip/problem/problem.cuh>
+#include <mps_parser/mps_data_model.hpp>
+#include <mps_parser/parser.hpp>
 #include <utilities/common_utils.hpp>
 #include <utilities/copy_helpers.hpp>
 #include <utilities/error.hpp>
@@ -35,15 +35,14 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
-#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
 
-namespace cuopt::mathematical_optimization::test {
+namespace cuopt::linear_programming::test {
 
-namespace lp  = cuopt::mathematical_optimization;
-namespace dtl = cuopt::mathematical_optimization::mip;
+namespace lp  = cuopt::linear_programming;
+namespace dtl = cuopt::linear_programming::detail;
 
 template <typename i_t, typename T>
 thrust::host_vector<T> rand_vec(i_t size, T dist_beg, T dist_end)
@@ -110,7 +109,7 @@ lp::optimization_problem_t<i_t, f_t> create_problem(raft::handle_t const* h, i_t
   auto offsets = rand_vec<i_t, i_t>(n_cnst + 1, average_vars_per_cnst, average_vars_per_cnst * 5);
   thrust::exclusive_scan(thrust::host, offsets.begin(), offsets.end(), offsets.begin());
 
-  i_t nnz = offsets.back();
+  i_t nnz = offsets.back() + 1;
 
   // a_values - non-zero coefficients
   auto coeff = rand_vec<i_t, f_t>(nnz, 0.2, 10.0);
@@ -193,7 +192,7 @@ void test_equal_val_bounds(i_t n_cnst, i_t n_var)
 
   problem.preprocess_problem();
 
-  mip::trivial_presolve(problem);
+  detail::trivial_presolve(problem);
 
   EXPECT_EQ(selected_vars.size() + problem.n_variables, n_var);
 }
@@ -203,95 +202,6 @@ TEST(problem, run_small_tests)
   std::vector<std::pair<int, int>> cnst_var_vals = {{30, 150}, {40, 200}, {50, 300}};
   for (const auto& val : cnst_var_vals) {
     test_equal_val_bounds<int, double>(val.first, val.second);
-  }
-}
-
-namespace ds = cuopt::mathematical_optimization::simplex;
-
-template <typename i_t, typename f_t>
-void test_roundtrip_equivalence(i_t n_cnst, i_t n_var)
-{
-  raft::handle_t handle;
-  auto op_problem = create_problem<i_t, f_t>(&handle, n_cnst, n_var);
-  dtl::problem_t<i_t, f_t> problem(op_problem);
-  problem.preprocess_problem();
-
-  auto stream = handle.get_stream();
-
-  const auto n_constraints_before = problem.n_constraints;
-  const auto n_variables_before   = problem.n_variables;
-  const auto nnz_before           = problem.nnz;
-
-  auto coefficients_before         = cuopt::host_copy(problem.coefficients, stream);
-  auto variables_before            = cuopt::host_copy(problem.variables, stream);
-  auto offsets_before              = cuopt::host_copy(problem.offsets, stream);
-  auto constraint_lower_before     = cuopt::host_copy(problem.constraint_lower_bounds, stream);
-  auto constraint_upper_before     = cuopt::host_copy(problem.constraint_upper_bounds, stream);
-  auto variable_bounds_before      = cuopt::host_copy(problem.variable_bounds, stream);
-  auto objective_before            = cuopt::host_copy(problem.objective_coefficients, stream);
-  auto reverse_coefficients_before = cuopt::host_copy(problem.reverse_coefficients, stream);
-  auto reverse_constraints_before  = cuopt::host_copy(problem.reverse_constraints, stream);
-  auto reverse_offsets_before      = cuopt::host_copy(problem.reverse_offsets, stream);
-
-  ds::user_problem_t<i_t, f_t> host_problem(problem.handle_ptr);
-  problem.get_host_user_problem(host_problem);
-
-  problem.set_constraints_from_host_user_problem(host_problem);
-  ASSERT_EQ(host_problem.lower.size(), static_cast<size_t>(problem.n_variables));
-  ASSERT_EQ(host_problem.upper.size(), static_cast<size_t>(problem.n_variables));
-  std::vector<i_t> all_var_indices(problem.n_variables);
-  std::iota(all_var_indices.begin(), all_var_indices.end(), 0);
-  problem.update_variable_bounds(all_var_indices, host_problem.lower, host_problem.upper);
-
-  EXPECT_EQ(problem.n_constraints, n_constraints_before);
-  EXPECT_EQ(problem.n_variables, n_variables_before);
-  EXPECT_EQ(problem.nnz, nnz_before);
-
-  auto coefficients_after         = cuopt::host_copy(problem.coefficients, stream);
-  auto variables_after            = cuopt::host_copy(problem.variables, stream);
-  auto offsets_after              = cuopt::host_copy(problem.offsets, stream);
-  auto constraint_lower_after     = cuopt::host_copy(problem.constraint_lower_bounds, stream);
-  auto constraint_upper_after     = cuopt::host_copy(problem.constraint_upper_bounds, stream);
-  auto variable_bounds_after      = cuopt::host_copy(problem.variable_bounds, stream);
-  auto objective_after            = cuopt::host_copy(problem.objective_coefficients, stream);
-  auto reverse_coefficients_after = cuopt::host_copy(problem.reverse_coefficients, stream);
-  auto reverse_constraints_after  = cuopt::host_copy(problem.reverse_constraints, stream);
-  auto reverse_offsets_after      = cuopt::host_copy(problem.reverse_offsets, stream);
-
-  EXPECT_EQ(coefficients_before, coefficients_after) << "CSR coefficients differ";
-  EXPECT_EQ(variables_before, variables_after) << "CSR column indices differ";
-  EXPECT_EQ(offsets_before, offsets_after) << "CSR row offsets differ";
-  EXPECT_EQ(objective_before, objective_after) << "objective coefficients differ";
-  EXPECT_EQ(reverse_constraints_before, reverse_constraints_after) << "reverse constraints differ";
-  EXPECT_EQ(reverse_offsets_before, reverse_offsets_after) << "reverse offsets differ";
-  EXPECT_EQ(reverse_coefficients_before, reverse_coefficients_after)
-    << "reverse coefficients differ";
-
-  ASSERT_EQ(constraint_lower_before.size(), constraint_lower_after.size());
-  for (size_t i = 0; i < constraint_lower_before.size(); ++i) {
-    EXPECT_NEAR(constraint_lower_before[i], constraint_lower_after[i], 1e-10)
-      << "constraint_lower_bounds[" << i << "]";
-  }
-  ASSERT_EQ(constraint_upper_before.size(), constraint_upper_after.size());
-  for (size_t i = 0; i < constraint_upper_before.size(); ++i) {
-    EXPECT_NEAR(constraint_upper_before[i], constraint_upper_after[i], 1e-10)
-      << "constraint_upper_bounds[" << i << "]";
-  }
-
-  ASSERT_EQ(variable_bounds_before.size(), variable_bounds_after.size());
-  for (size_t i = 0; i < variable_bounds_before.size(); ++i) {
-    EXPECT_DOUBLE_EQ(variable_bounds_before[i].x, variable_bounds_after[i].x)
-      << "variable_bounds[" << i << "].lower";
-    EXPECT_DOUBLE_EQ(variable_bounds_before[i].y, variable_bounds_after[i].y)
-      << "variable_bounds[" << i << "].upper";
-  }
-}
-
-TEST(problem, get_set_host_user_problem_roundtrip_preserves_problem)
-{
-  std::vector<std::pair<int, int>> cnst_var_vals = {{5, 20}, {20, 80}, {40, 200}};
-  for (const auto& [nc, nv] : cnst_var_vals) {
-    test_roundtrip_equivalence<int, double>(nc, nv);
   }
 }
 
@@ -323,7 +233,7 @@ TEST(problem, setting_both_rhs_and_constraints_bounds)
     raft::handle_t handle;
     optimization_problem_t<int, double> op_problem(&handle);
     fill_problem(op_problem);
-    cuopt::mathematical_optimization::mip::problem_t<int, double> problem(op_problem);
+    cuopt::linear_programming::detail::problem_t<int, double> problem(op_problem);
 
     const auto constraints_lower_bounds =
       host_copy(problem.constraint_lower_bounds, handle.get_stream());
@@ -343,7 +253,7 @@ TEST(problem, setting_both_rhs_and_constraints_bounds)
     double upper[] = {3.0};
     op_problem.set_constraint_lower_bounds(lower, 1);
     op_problem.set_constraint_upper_bounds(upper, 1);
-    cuopt::mathematical_optimization::mip::problem_t<int, double> problem(op_problem);
+    cuopt::linear_programming::detail::problem_t<int, double> problem(op_problem);
 
     const auto constraints_lower_bounds =
       host_copy(problem.constraint_lower_bounds, handle.get_stream());
@@ -363,7 +273,7 @@ TEST(problem, setting_both_rhs_and_constraints_bounds)
     op_problem.set_constraint_lower_bounds(lower, 1);
     op_problem.set_constraint_upper_bounds(upper, 1);
     fill_problem(op_problem);
-    cuopt::mathematical_optimization::mip::problem_t<int, double> problem(op_problem);
+    cuopt::linear_programming::detail::problem_t<int, double> problem(op_problem);
 
     const auto constraints_lower_bounds =
       host_copy(problem.constraint_lower_bounds, handle.get_stream());
@@ -382,7 +292,7 @@ TEST(optimization_problem_t_DeathTest, test_check_problem_validity)
 
   raft::handle_t handle;
   auto op_problem        = optimization_problem_t<int, double>(&handle);
-  using custom_problem_t = cuopt::mathematical_optimization::mip::problem_t<int, double>;
+  using custom_problem_t = cuopt::linear_programming::detail::problem_t<int, double>;
 
   // Check if assert if nothing
   EXPECT_DEATH({ custom_problem_t problem(op_problem); }, "");
@@ -485,4 +395,4 @@ TEST(optimization_problem_t_DeathTest, test_check_problem_validity)
 }
 #endif
 
-}  // namespace cuopt::mathematical_optimization::test
+}  // namespace cuopt::linear_programming::test

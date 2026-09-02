@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -8,13 +8,13 @@
 #include "../linear_programming/utilities/pdlp_test_utilities.cuh"
 #include "mip_utils.cuh"
 
-#include <cuopt/mathematical_optimization/io/parser.hpp>
-#include <cuopt/mathematical_optimization/mip/solver_settings.hpp>
-#include <cuopt/mathematical_optimization/mip/solver_stats.hpp>
-#include <mip_heuristics/presolve/trivial_presolve.cuh>
-#include <mip_heuristics/relaxed_lp/relaxed_lp.cuh>
-#include <pdlp/pdlp.cuh>
-#include <pdlp/utilities/problem_checking.cuh>
+#include <cuopt/linear_programming/mip/solver_settings.hpp>
+#include <cuopt/linear_programming/mip/solver_stats.hpp>
+#include <linear_programming/pdlp.cuh>
+#include <linear_programming/utilities/problem_checking.cuh>
+#include <mip/presolve/trivial_presolve.cuh>
+#include <mip/relaxed_lp/relaxed_lp.cuh>
+#include <mps_parser/parser.hpp>
 #include <utilities/common_utils.hpp>
 #include <utilities/error.hpp>
 
@@ -29,9 +29,9 @@
 #include <string>
 #include <vector>
 
-namespace cuopt::mathematical_optimization::test {
+namespace cuopt::linear_programming::test {
 
-static void init_handler(const raft::handle_t* handle_ptr)
+void init_handler(const raft::handle_t* handle_ptr)
 {
   // Init cuBlas / cuSparse context here to avoid having it during solving time
   RAFT_CUBLAS_TRY(raft::linalg::detail::cublassetpointermode(
@@ -40,34 +40,42 @@ static void init_handler(const raft::handle_t* handle_ptr)
     handle_ptr->get_cusparse_handle(), HIPSPARSE_POINTER_MODE_DEVICE, handle_ptr->get_stream()));
 }
 
+void setup_pdlp(rmm::cuda_stream_view stream_view)
+{
+  detail::set_adaptive_step_size_hyper_parameters(stream_view);
+  detail::set_restart_hyper_parameters(stream_view);
+  detail::set_pdlp_hyper_parameters(stream_view);
+}
+
 void test_bounds_standardization_test(std::string test_instance)
 {
   const raft::handle_t handle_{};
   std::cout << "Running: " << test_instance << std::endl;
   auto path = make_path_absolute(test_instance);
-  cuopt::mathematical_optimization::io::mps_data_model_t<int, double> problem =
-    cuopt::mathematical_optimization::io::read_mps<int, double>(path, false);
+  cuopt::mps_parser::mps_data_model_t<int, double> problem =
+    cuopt::mps_parser::parse_mps<int, double>(path, false);
   handle_.sync_stream();
   auto op_problem = mps_data_model_to_optimization_problem(&handle_, problem);
   problem_checking_t<int, double>::check_problem_representation(op_problem);
+  setup_pdlp(handle_.get_stream());
   init_handler(op_problem.get_handle_ptr());
   // run the problem constructor of MIP, so that we do bounds standardization
-  mip::problem_t<int, double> standardized_problem(op_problem);
-  mip::problem_t<int, double> original_problem(op_problem);
+  detail::problem_t<int, double> standardized_problem(op_problem);
+  detail::problem_t<int, double> original_problem(op_problem);
   standardized_problem.preprocess_problem();
-  mip::trivial_presolve(standardized_problem);
-  mip::solution_t<int, double> solution_1(standardized_problem);
+  detail::trivial_presolve(standardized_problem);
+  detail::solution_t<int, double> solution_1(standardized_problem);
 
   mip_solver_settings_t<int, double> default_settings{};
-  mip::relaxed_lp_settings_t lp_settings;
+  detail::relaxed_lp_settings_t lp_settings;
   lp_settings.time_limit              = 120.;
   lp_settings.tolerance               = default_settings.tolerances.absolute_tolerance;
   lp_settings.per_constraint_residual = false;
 
   // run the problem through pdlp
-  auto result_1 = mip::get_relaxed_lp_solution(standardized_problem, solution_1, lp_settings);
+  auto result_1 = detail::get_relaxed_lp_solution(standardized_problem, solution_1, lp_settings);
   solution_1.compute_feasibility();
-  bool sol_1_feasible = (int)result_1.get_termination_status() == CUOPT_TERMINATION_STATUS_OPTIMAL;
+  bool sol_1_feasible = (int)result_1.get_termination_status() == CUOPT_TERIMINATION_STATUS_OPTIMAL;
   // the problem might not be feasible in terms of per constraint residual
   // only consider the pdlp results
   EXPECT_TRUE(sol_1_feasible);
@@ -87,7 +95,7 @@ void test_bounds_standardization_test(std::string test_instance)
   // not applied
   op_problem.set_problem_category(problem_category_t::LP);
   auto settings             = pdlp_solver_settings_t<int, double>{};
-  settings.pdlp_solver_mode = cuopt::mathematical_optimization::pdlp_solver_mode_t::Stable1;
+  settings.pdlp_solver_mode = cuopt::linear_programming::pdlp_solver_mode_t::Stable1;
   settings.set_optimality_tolerance(1e-4);
   settings.tolerances.relative_primal_tolerance = 1e-6;
   settings.tolerances.relative_dual_tolerance   = 1e-6;
@@ -108,4 +116,4 @@ TEST(mip_solve, bounds_standardization_test)
   }
 }
 
-}  // namespace cuopt::mathematical_optimization::test
+}  // namespace cuopt::linear_programming::test

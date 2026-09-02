@@ -11,6 +11,8 @@
 
 #include <routing/generator/generator.hpp>
 
+#include <raft/random/rng.cuh>
+
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/sequence.h>
 
@@ -76,3 +78,5 @@ TEST_F(vehicle_types_float_test_t, VEHICLE_TYPES) { test_vehicle_types(); }
 }  // namespace test
 }  // namespace routing
 }  // namespace cuopt
+
+CUOPT_TEST_PROGRAM_MAIN()
