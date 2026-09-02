@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # LP Warmstart CLI Example
@@ -7,7 +7,7 @@
 # This example demonstrates how to use a previous solution as warmstart
 # for a new LP request using the cuopt_sh CLI tool.
 #
-# Note: Warmstart is only applicable to LP, not for MILP.
+# Note: Warmstart is only applicable to LP, not for MIP.
 #
 # Requirements:
 #   - cuOpt server running on localhost:5000
@@ -45,7 +45,8 @@ echo '{
     "solver_config": {
         "tolerances": {
             "optimality": 0.0001
-        }
+        },
+        "pdlp_solver_mode": 1
     }
  }' > data.json
 
@@ -76,4 +77,4 @@ cuopt_sh data.json -t LP -i $ip -p $port -wid $reqId
 rm -f data.json
 
 echo ""
-echo "Note: Warmstart is only supported for LP problems, not MILP."
+echo "Note: Warmstart is only supported for LP problems, not MIP."

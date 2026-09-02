@@ -7,18 +7,18 @@
 /* clang-format on */
 
 #include <algorithm>
-#include <cuopt/linear_programming/mip/solver_settings.hpp>
-#include <cuopt/linear_programming/solve.hpp>
-#include <mip/problem/problem.cuh>
-#include <mps_parser/parser.hpp>
+#include <cuopt/mathematical_optimization/io/parser.hpp>
+#include <cuopt/mathematical_optimization/mip/solver_settings.hpp>
+#include <cuopt/mathematical_optimization/solve.hpp>
+#include <mip_heuristics/problem/problem.cuh>
 #include <utilities/copy_helpers.hpp>
 
-namespace cuopt::linear_programming::test {
+namespace cuopt::mathematical_optimization::test {
 
 static void test_variable_bounds(
-  const cuopt::mps_parser::mps_data_model_t<int, double>& problem,
+  const cuopt::mathematical_optimization::io::mps_data_model_t<int, double>& problem,
   const rmm::device_uvector<double>& solution,
-  const cuopt::linear_programming::mip_solver_settings_t<int, double> settings)
+  const cuopt::mathematical_optimization::mip_solver_settings_t<int, double> settings)
 {
   const double* lower_bound_ptr = problem.get_variable_lower_bounds().data();
   const double* upper_bound_ptr = problem.get_variable_upper_bounds().data();
@@ -27,6 +27,33 @@ static void test_variable_bounds(
   cuopt_assert(host_assignment.size() == problem.get_variable_lower_bounds().size(), "");
   cuopt_assert(host_assignment.size() == problem.get_variable_upper_bounds().size(), "");
   std::vector<int> indices(host_assignment.size());
+  std::iota(indices.begin(), indices.end(), 0);
+  bool result = std::all_of(indices.begin(), indices.end(), [=](int idx) {
+    bool res = true;
+    if (lower_bound_ptr != nullptr) {
+      res = res && (assignment_ptr[idx] >=
+                    lower_bound_ptr[idx] - settings.tolerances.integrality_tolerance);
+    }
+    if (upper_bound_ptr != nullptr) {
+      res = res && (assignment_ptr[idx] <=
+                    upper_bound_ptr[idx] + settings.tolerances.integrality_tolerance);
+    }
+    return res;
+  });
+  EXPECT_TRUE(result);
+}
+
+static void test_variable_bounds(
+  const cuopt::mathematical_optimization::io::mps_data_model_t<int, double>& problem,
+  const std::vector<double>& solution,
+  const cuopt::mathematical_optimization::mip_solver_settings_t<int, double> settings)
+{
+  const double* lower_bound_ptr = problem.get_variable_lower_bounds().data();
+  const double* upper_bound_ptr = problem.get_variable_upper_bounds().data();
+  const double* assignment_ptr  = solution.data();
+  cuopt_assert(solution.size() == problem.get_variable_lower_bounds().size(), "");
+  cuopt_assert(solution.size() == problem.get_variable_upper_bounds().size(), "");
+  std::vector<int> indices(solution.size());
   std::iota(indices.begin(), indices.end(), 0);
   bool result = std::all_of(indices.begin(), indices.end(), [=](int idx) {
     bool res = true;
@@ -68,7 +95,7 @@ struct violation {
 };
 
 static void test_constraint_sanity_per_row(
-  const cuopt::mps_parser::mps_data_model_t<int, double>& op_problem,
+  const cuopt::mathematical_optimization::io::mps_data_model_t<int, double>& op_problem,
   const rmm::device_uvector<double>& solution,
   double abs_tolerance,
   double rel_tolerance)
@@ -81,7 +108,6 @@ static void test_constraint_sanity_per_row(
   const std::vector<double>& variable_lower_bounds   = op_problem.get_variable_lower_bounds();
   const std::vector<double>& variable_upper_bounds   = op_problem.get_variable_upper_bounds();
   std::vector<double> residual(constraint_lower_bounds.size(), 0.0);
-  std::vector<double> viol(constraint_lower_bounds.size(), 0.0);
   auto h_solution = cuopt::host_copy(solution, solution.stream());
   // CSR SpMV
   for (size_t i = 0; i < offsets.size() - 1; ++i) {
@@ -102,26 +128,57 @@ static void test_constraint_sanity_per_row(
   }
 }
 
+static void test_constraint_sanity_per_row(
+  const cuopt::mathematical_optimization::io::mps_data_model_t<int, double>& op_problem,
+  const std::vector<double>& solution,
+  double abs_tolerance,
+  double rel_tolerance)
+{
+  const std::vector<double>& values                  = op_problem.get_constraint_matrix_values();
+  const std::vector<int>& indices                    = op_problem.get_constraint_matrix_indices();
+  const std::vector<int>& offsets                    = op_problem.get_constraint_matrix_offsets();
+  const std::vector<double>& constraint_lower_bounds = op_problem.get_constraint_lower_bounds();
+  const std::vector<double>& constraint_upper_bounds = op_problem.get_constraint_upper_bounds();
+  std::vector<double> residual(constraint_lower_bounds.size(), 0.0);
+  // CSR SpMV
+  for (size_t i = 0; i < offsets.size() - 1; ++i) {
+    for (int j = offsets[i]; j < offsets[i + 1]; ++j) {
+      residual[i] += values[j] * solution[indices[j]];
+    }
+  }
+
+  auto functor = violation<double>{};
+
+  // Compute violation to lower/upper bound
+  for (size_t i = 0; i < residual.size(); ++i) {
+    double tolerance = abs_tolerance + combine_finite_abs_bounds<double>(
+                                         constraint_lower_bounds[i], constraint_upper_bounds[i]) *
+                                         rel_tolerance;
+    double viol = functor(residual[i], constraint_lower_bounds[i], constraint_upper_bounds[i]);
+    EXPECT_LE(viol, tolerance);
+  }
+}
+
 static std::tuple<mip_termination_status_t, double, double> test_mps_file(
   std::string test_instance,
-  double time_limit    = 1,
-  bool heuristics_only = true,
-  bool presolve        = true)
+  double time_limit     = 1,
+  bool heuristics_only  = true,
+  presolver_t presolver = presolver_t::Default)
 {
   const raft::handle_t handle_{};
 
   auto path = make_path_absolute(test_instance);
-  cuopt::mps_parser::mps_data_model_t<int, double> problem =
-    cuopt::mps_parser::parse_mps<int, double>(path, false);
+  cuopt::mathematical_optimization::io::mps_data_model_t<int, double> problem =
+    cuopt::mathematical_optimization::io::read_mps<int, double>(path, false);
   handle_.sync_stream();
   mip_solver_settings_t<int, double> settings;
   settings.time_limit                  = time_limit;
   settings.heuristics_only             = heuristics_only;
-  settings.presolve                    = presolve;
+  settings.presolver                   = presolver;
   mip_solution_t<int, double> solution = solve_mip(&handle_, problem, settings);
   return std::make_tuple(solution.get_termination_status(),
                          solution.get_objective_value(),
                          solution.get_solution_bound());
 }
 
-}  // namespace cuopt::linear_programming::test
+}  // namespace cuopt::mathematical_optimization::test

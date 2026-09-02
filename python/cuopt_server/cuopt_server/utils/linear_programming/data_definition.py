@@ -319,7 +319,7 @@ class InitialSolution(StrictModel):
     )
 
 
-class Tolerances(StrictModel):
+class Tolerances(BaseModel):
     optimality: float = Field(
         default=None,
         description="absolute and relative tolerance on the primal feasibility, dual feasibility, and gap",  # noqa
@@ -374,7 +374,7 @@ class Tolerances(StrictModel):
     )
 
 
-class SolverConfig(StrictModel):
+class SolverConfig(BaseModel):
     tolerances: Optional[Tolerances] = Field(
         default=Tolerances(),
         description="Note: Not supported for MILP."
@@ -441,18 +441,36 @@ class SolverConfig(StrictModel):
         "<br>"
         "Note: Not supported for MILP. ",
     )
-    mip_scaling: Optional[bool] = Field(
-        default=True,
-        description="Set True to enable MIP scaling, False to disable.",
+    mip_scaling: Optional[int] = Field(
+        default=1,
+        description="MIP scaling mode:"
+        "<br>"
+        "- 0: No scaling"
+        "<br>"
+        "- 1: Full scaling (objective + row)"
+        "<br>"
+        "- 2: Row scaling only (no objective scaling), default",
     )
     mip_heuristics_only: Optional[bool] = Field(
         default=False,
         description="Set True to run heuristics only, False to run "
         "heuristics and branch and bound for MILP",
     )
+    mip_batch_pdlp_strong_branching: Optional[int] = Field(
+        default=0,
+        description="Strong branching mode: 0 = Dual Simplex only, "
+        "1 = cooperative work-stealing (DS + batch PDLP), "
+        "2 = batch PDLP only.",
+    )
+    mip_batch_pdlp_reliability_branching: Optional[int] = Field(
+        default=0,
+        description="Reliability branching mode: 0 = Dual Simplex only, "
+        "1 = cooperative work-stealing (DS + batch PDLP), "
+        "2 = batch PDLP only.",
+    )
     num_cpu_threads: Optional[int] = Field(
         default=None,
-        description="Set the number of CPU threads to use for branch and bound.",  # noqa
+        description="Set the number of CPU threads to use in the MIP solver",  # noqa
     )
     num_gpus: Optional[int] = Field(
         default=None,
@@ -483,7 +501,8 @@ class SolverConfig(StrictModel):
         description="Set the type of dual initial point to use for the barrier"
         "solver. -1 for automatic, 0 to use Lustig, Marsten, and Shanno"
         "initial point, 1 to use initial point from a dual least squares"
-        "problem",
+        "problem, 2 to use Sturm/SeDuMi mu-based primal+dual"
+        "point",
     )
     eliminate_dense_columns: Optional[bool] = Field(
         default=True,
@@ -500,11 +519,20 @@ class SolverConfig(StrictModel):
         default=False,
         description="Set True to use crossover, False to not use crossover.",
     )
-    presolve: Optional[bool] = Field(
+    presolve: Optional[int] = Field(
         default=None,
-        description="Set True to enable presolve, False to disable presolve. "
-        "Presolve can reduce problem size and improve solve time. "
-        "Default is True for MIP problems and False for LP problems.",
+        description="Set presolve mode: 0 to disable presolve, 1 for Papilo presolve for MIP or LPs, "  # noqa
+        "2 for PSLP LP presolve. Presolve can reduce problem size and improve solve time. "  # noqa
+        "Default is 1 for MIP problems and 2 for LP problems.",
+    )
+    mip_probing: Optional[bool] = Field(
+        default=None,
+        description="Enable or disable the cuOpt-internal probing-cache step of "  # noqa
+        "MIP presolve. True (default) runs probing as part of presolve; False "  # noqa
+        "skips probing while leaving the rest of presolve untouched. Has no "  # noqa
+        "effect if presolve is disabled (presolve=0) or when running in "  # noqa
+        "deterministic mode (probing is already skipped). LP-only solves "  # noqa
+        "ignore this setting.",
     )
     dual_postsolve: Optional[bool] = Field(
         default=None,
@@ -695,10 +723,10 @@ class SolutionData(StrictModel):
         default=None,
         description=("Returns the engine solve time in seconds"),
     )
-    solved_by_pdlp: bool = Field(
+    solved_by: int = Field(
         default=None,
         description=(
-            "Returns whether problem was solved by PDLP or Dual Simplex"
+            "Returns whether problem was solved by PDLP, Barrier or Dual Simplex"
         ),
     )
     primal_objective: float = Field(
@@ -752,6 +780,7 @@ LP_STATUS_NAMES = frozenset(
         "IterationLimit",
         "TimeLimit",
         "PrimalFeasible",
+        "UnboundedOrInfeasible",
     }
 )
 
@@ -766,6 +795,7 @@ MILP_STATUS_NAMES = frozenset(
         "Infeasible",
         "Unbounded",
         "TimeLimit",
+        "UnboundedOrInfeasible",
     }
 )
 
@@ -828,6 +858,7 @@ class LPSolve(StrictModel):
 class IncumbentSolution(StrictModel):
     solution: List[float]
     cost: Union[float, None]
+    bound: Union[float, None]
 
 
 lp_example_data = {

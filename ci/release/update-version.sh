@@ -100,7 +100,6 @@ echo "${RAPIDS_BRANCH_NAME}" > RAPIDS_BRANCH
 DEPENDENCIES=(
   cudf
   cuopt
-  cuopt-mps-parser
   cuopt-server
   cuopt-sh-client
   libcuopt
@@ -125,9 +124,13 @@ for DEP in "${DEPENDENCIES[@]}"; do
   done
 done
 
-# Update project.json
-PROJECT_FILE="docs/cuopt/source/project.json"
-sed_runner 's/\("version": "\)[0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]"/\1'${NEXT_FULL_TAG}'"/g' "${PROJECT_FILE}"
+# Update the Java API version. Maven has no notion of the zero-padded RAPIDS patch field, and a
+# padded patch would sort oddly against a later unpadded one, so the padding is stripped here.
+# This matches how cuvs versions its Java artifact.
+NEXT_FULL_JAVA_TAG=$(echo "$NEXT_FULL_TAG" | sed -E 's/^([0-9]+)\.([0-9]+)\.0*([0-9]+)$/\1.\2.\3/')
+for FILE in java/*/pom.xml; do
+  sed_runner "/<!--CUOPT_JAVA#VERSION_UPDATE_MARKER_START-->.*<!--CUOPT_JAVA#VERSION_UPDATE_MARKER_END-->/s//<!--CUOPT_JAVA#VERSION_UPDATE_MARKER_START--><version>${NEXT_FULL_JAVA_TAG}<\/version><!--CUOPT_JAVA#VERSION_UPDATE_MARKER_END-->/g" "${FILE}"
+done
 
 # Update README.md version badge
 sed_runner 's/badge\/version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue/badge\/version-'${NEXT_FULL_TAG}'-blue/g' README.md
@@ -143,8 +146,9 @@ sed_runner 's/\(version: \)[0-9][0-9]\.[0-9]\+\.[0-9]\+/\1'${DOCKER_TAG}'/g' hel
 # CI files - context-aware branch references and version updates
 for FILE in .github/workflows/*.yaml; do
   sed_runner "/shared-workflows/ s|@.*|@${RAPIDS_BRANCH_NAME}|g" "${FILE}"
-  # CI image tags of the form {rapids_version}-{something}
-  sed_runner "s/:[0-9]*\\.[0-9]*-/:${NEXT_SHORT_TAG}-/g" "${FILE}"
+  # CI image tags of the form rapidsai/<image>:{rapids_version}-{something}.
+  # Scoped to rapidsai/ so unrelated images like python:3.14-slim aren't rewritten.
+  sed_runner "/rapidsai\// s|:[0-9]*\\.[0-9]*-|:${NEXT_SHORT_TAG}-|g" "${FILE}"
 done
 
 # Documentation references - context-aware
@@ -154,5 +158,7 @@ if [[ "${RUN_CONTEXT}" == "main" ]]; then
 elif [[ "${RUN_CONTEXT}" == "release" ]]; then
   # In release context, use release branch for external documentation links (word boundaries to avoid partial matches)
   sed_runner "s|\\bmain\\b|release/${NEXT_SHORT_TAG}|g" docs/cuopt/source/faq.rst
-  sed_runner "s|\\bmain\\b|release/${NEXT_SHORT_TAG}|g" docs/cuopt/source/cuopt-python/routing/routing-example.ipynb
 fi
+
+# Update docs version switcher to include the new version
+python ci/utils/update_doc_versions.py

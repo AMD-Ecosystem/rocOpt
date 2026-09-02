@@ -26,7 +26,13 @@ Dependencies are installed automatically when using the pip and Conda installati
       - 12.0+
 
    * Python:
-      - >= 3.10.* and <= 3.13.*
+      - >= 3.11.* and <= 3.14.*
+
+   * OpenSSL:
+      - 3.x runtime (``libssl.so.3`` and ``libcrypto.so.3``) must be present on the host
+      - Shipped by default on Ubuntu 22.04+, Debian 12+, RHEL/Rocky/Alma 9+, Fedora 36+
+      - On RHEL/Rocky/Alma 8, install the ``openssl3`` package from EPEL (see :doc:`faq`)
+      - On Ubuntu 20.04, install OpenSSL 3 from a PPA/backport or use the cuOpt container
 
    * NVIDIA drivers:
       - 525.60.13+ (Linux)
@@ -89,7 +95,7 @@ Container
 * A GPU-aware container runtime (see the `ROCm container runtime install guide <https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/docker.html>`_) needs to be installed
 
 
-Thin-client for Self-Hosted
+Thin-Client for Self-Hosted
 ----------------------------
 
 * OS: Linux
@@ -98,4 +104,4 @@ Thin-client for Self-Hosted
    - x86-64
    - ARM64
 
-* Python >= 3.10.x <= 3.13.x
+* Python >= 3.11.x <= 3.14.x

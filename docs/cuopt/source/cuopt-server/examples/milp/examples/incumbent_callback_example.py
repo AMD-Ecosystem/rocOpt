@@ -1,14 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-MILP Incumbent and Logging Callback Example
+MIP Incumbent and Logging Callback Example
 
 This example demonstrates how to use callbacks with the cuOpt server:
 - Incumbent solution callback: Receives intermediate solutions as they're found
 - Logging callback: Receives solver log messages in real-time
 
 Note:
-    Incumbent solution callback is only applicable to MILP, not for LP.
+    Incumbent solution callback is only applicable to MIP, not for LP.
 
 Requirements:
     - cuOpt server running (default: localhost:5000)
@@ -61,10 +61,16 @@ def main():
         ip="localhost", port=5000, timeout_exception=False
     )
 
-    # Incumbent callback - receives intermediate solutions
-    def callback(solution, solution_cost):
-        """Called when solver finds a new incumbent solution."""
-        print(f"Solution : {solution} cost : {solution_cost}\n")
+    # Incumbent callback - receives intermediate host solutions
+    def callback(solution, solution_cost, solution_bound):
+        """Called when solver finds a new incumbent solution.
+
+        solution_bound can be None when no finite bound is available yet.
+        """
+        print(
+            f"Solution : {solution} cost : {solution_cost} "
+            f"bound : {solution_bound}\n"
+        )
 
     # Logging callback - receives server log messages
     def log_callback(log):
@@ -72,7 +78,7 @@ def main():
         for i in log:
             print("server-log: ", i)
 
-    print("=== Solving MILP with Callbacks ===")
+    print("=== Solving MIP with Callbacks ===")
     print("\n--- Logging Output ---")
 
     solution = cuopt_service_client.get_LP_solve(

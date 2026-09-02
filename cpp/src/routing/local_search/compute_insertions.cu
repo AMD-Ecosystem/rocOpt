@@ -1,7 +1,7 @@
 #include "hip/hip_runtime.h"
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -10,7 +10,7 @@
 #include "compute_insertions.cuh"
 #include "delivery_insertion.cuh"
 
-#include <utilities/seed_generator.cuh>
+#include <routing/utilities/seed_generator.cuh>
 #include "routing/utilities/cuopt_utils.cuh"
 
 #include "../routing_helpers.cuh"
@@ -833,7 +833,7 @@ void find_insertions(solution_t<i_t, f_t, REQUEST>& sol,
     CUOPT_KERNEL_TRACE("find_insertions_kernel<IMPROVE>", "blocks=%d TPB=%d", n_blocks, TPB);
     find_insertions_kernel<i_t, f_t, REQUEST, search_type_t::IMPROVE, insert_unserviced>
       <<<n_blocks, TPB, shared_size, sol.sol_handle->get_stream()>>>(
-        sol.view(), move_candidates.view(), seed_generator::get_seed());
+        sol.view(), move_candidates.view(), sol.problem_ptr->seed_gen.get_seed());
   } else {
     move_candidates.number_of_blocks_per_ls_route =
       std::max(1, sol.get_max_active_nodes_for_all_routes() / 4);
@@ -849,7 +849,7 @@ void find_insertions(solution_t<i_t, f_t, REQUEST>& sol,
       CUOPT_KERNEL_TRACE("find_insertions_kernel<CROSS>", "blocks=%d TPB=%d", n_blocks, TPB);
       find_insertions_kernel<i_t, f_t, REQUEST, search_type_t::CROSS, insert_unserviced>
         <<<n_blocks, TPB, shared_size, sol.sol_handle->get_stream()>>>(
-          sol.view(), move_candidates.view(), seed_generator::get_seed());
+          sol.view(), move_candidates.view(), sol.problem_ptr->seed_gen.get_seed());
     } else if (search_type == search_type_t::RANDOM) {
       n_blocks    = sol.get_num_requests();
       bool is_set = set_shmem_of_kernel(
@@ -861,7 +861,7 @@ void find_insertions(solution_t<i_t, f_t, REQUEST>& sol,
       CUOPT_KERNEL_TRACE("find_insertions_kernel<RANDOM>", "blocks=%d TPB=%d", n_blocks, TPB);
       find_insertions_kernel<i_t, f_t, REQUEST, search_type_t::RANDOM, insert_unserviced>
         <<<n_blocks, TPB, shared_size, sol.sol_handle->get_stream()>>>(
-          sol.view(), move_candidates.view(), seed_generator::get_seed());
+          sol.view(), move_candidates.view(), sol.problem_ptr->seed_gen.get_seed());
     }
   }
   RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
@@ -895,7 +895,7 @@ void find_unserviced_insertions(solution_t<i_t, f_t, REQUEST>& sol,
   cuopt_expects(is_set, error_type_t::OutOfMemoryError, "Not enough shared memory on device");
   find_insertions_kernel<i_t, f_t, REQUEST, search_type_t::IMPROVE, insert_unserviced>
     <<<n_blocks, TPB, shared_size, sol.sol_handle->get_stream()>>>(
-      sol.view(), move_candidates.view(), seed_generator::get_seed());
+      sol.view(), move_candidates.view(), sol.problem_ptr->seed_gen.get_seed());
   RAFT_CHECK_CUDA(sol.sol_handle->get_stream());
   sol.sol_handle->sync_stream();
 }

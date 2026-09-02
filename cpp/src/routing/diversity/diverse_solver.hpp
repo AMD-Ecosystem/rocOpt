@@ -1,7 +1,7 @@
 #include "hip/hip_runtime.h"
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -12,7 +12,7 @@
 #include "helpers.hpp"
 #include "population.hpp"
 
-#include <utilities/seed_generator.cuh>
+#include <routing/utilities/seed_generator.cuh>
 #include <utilities/timer.hpp>
 #include "../crossovers/dispose.hpp"
 #include "../crossovers/eax_recombiner.hpp"
@@ -246,7 +246,7 @@ struct solve {
       temp_pair(solution{p_, pool_allocator_.sol_handles[0].get()},
                 solution{p_, pool_allocator_.sol_handles[0].get()}),
       f(file_name),
-      rng(seed_generator::get_seed()),
+      rng(p->seed_gen.get_seed()),
       timer(timer_),
       improvement_timer(timer_),
       perturbation_count(0)

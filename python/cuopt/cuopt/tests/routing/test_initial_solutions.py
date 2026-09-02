@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
@@ -22,15 +22,18 @@ class TestOption(Enum):
 def get_initial_solutions(routing_solution, n_initial_sols=5):
     initial_sol = routing_solution.get_route()
     sol_offsets = [0]
-    vehicle_ids = cudf.Series()
-    routes = cudf.Series()
-    types = cudf.Series()
+    vehicle_ids_parts = []
+    routes_parts = []
+    types_parts = []
     # simply expand the same solution for convenience
     for i in range(0, n_initial_sols):
-        vehicle_ids = cudf.concat([vehicle_ids, initial_sol["truck_id"]])
-        routes = cudf.concat([routes, initial_sol["route"]])
-        types = cudf.concat([types, initial_sol["type"]])
+        vehicle_ids_parts.append(initial_sol["truck_id"])
+        routes_parts.append(initial_sol["route"])
+        types_parts.append(initial_sol["type"])
         sol_offsets.append(sol_offsets[i] + initial_sol["route"].shape[0])
+    vehicle_ids = cudf.concat(vehicle_ids_parts)
+    routes = cudf.concat(routes_parts)
+    types = cudf.concat(types_parts)
     sol_offsets = cudf.Series(sol_offsets)
     return vehicle_ids, routes, types, sol_offsets
 
@@ -77,8 +80,12 @@ def test_initial_solutions(flag):
         d.add_capacity_dimension("demand", demand, capacities)
     d.set_order_locations(order_loc)
     if flag == TestOption.SKIP_DEPOTS:
-        d.set_skip_first_trips(cudf.Series([1, 1, 1, 1, 1]))
-        d.set_drop_return_trips(cudf.Series([1, 1, 1, 1, 1]))
+        skip_first = cudf.Series([1, 1, 1, 1, 1])
+        drop_return = cudf.Series([1, 1, 1, 1, 1])
+        d.set_skip_first_trips(skip_first)
+        d.set_drop_return_trips(drop_return)
+        assert (d.get_skip_first_trips() == skip_first).all()
+        assert (d.get_drop_return_trips() == drop_return).all()
     if flag == TestOption.BREAKS:
         d.add_break_dimension(
             cudf.Series([0] * vehicle_num),
@@ -121,6 +128,14 @@ def test_initial_solutions(flag):
         sol_offsets = cudf.Series([0, 4])
 
     d.add_initial_solutions(vehicle_ids, routes, types, sol_offsets)
+    ret_initial = d.get_initial_solutions()
+    assert len(ret_initial) == 4
+    ret_sizes = sorted(len(x) for x in ret_initial)
+    expected_sizes = sorted(
+        [len(vehicle_ids), len(routes), len(types), len(sol_offsets)]
+    )
+    assert ret_sizes == expected_sizes
+
     s.set_time_limit(1)
     routing_solution = routing.Solve(d, s)
 

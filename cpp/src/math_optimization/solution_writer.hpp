@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace cuopt::linear_programming {
+namespace cuopt::mathematical_optimization {
 
 /**
  * @brief Writes a solution to a .sol file
@@ -23,10 +23,11 @@ namespace cuopt::linear_programming {
  */
 class solution_writer_t {
  public:
+  template <typename f_t>
   static void write_solution_to_sol_file(const std::string& sol_file_path,
                                          const std::string& status,
-                                         const double objective_value,
+                                         const f_t objective_value,
                                          const std::vector<std::string>& variable_names,
-                                         const std::vector<double>& variable_values);
+                                         const std::vector<f_t>& variable_values);
 };
-}  // namespace cuopt::linear_programming
+}  // namespace cuopt::mathematical_optimization

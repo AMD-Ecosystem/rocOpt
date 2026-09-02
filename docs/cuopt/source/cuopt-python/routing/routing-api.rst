@@ -16,7 +16,6 @@ cuOpt Routing Python API Reference
 .. autoclass:: cuopt.routing.DataModel
    :members:
    :undoc-members:
-   :show-inheritance:
 
 .. autoclass:: cuopt.routing.SolverSettings
    :members:
@@ -24,6 +23,8 @@ cuOpt Routing Python API Reference
    :show-inheritance:
 
 .. autofunction:: cuopt.routing.Solve
+
+.. autofunction:: cuopt.routing.BatchSolve
 
 .. autoclass:: cuopt.routing.Assignment
    :members:

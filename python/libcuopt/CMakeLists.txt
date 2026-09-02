@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 
-cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 # Detect platform before project() call -- project(LANGUAGES CUDA) would fail
 # on ROCm systems that have no nvcc.
@@ -54,6 +54,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(argparse)
 
+# gRPC must be available as an installed CMake package (gRPCConfig.cmake).
+# On RockyLinux 8 wheel builds we install it in CI via ci/utils/install_protobuf_grpc.sh.
+find_package(gRPC CONFIG REQUIRED)
 
 find_package(Boost 1.65 REQUIRED)
 if(Boost_FOUND)
@@ -90,6 +93,7 @@ set(rpaths
   "$ORIGIN/../../nvidia/curand/lib"
   "$ORIGIN/../../nvidia/cusolver/lib"
   "$ORIGIN/../../nvidia/cusparse/lib"
+  "$ORIGIN/../../nvidia/nccl/lib"
   "$ORIGIN/../../nvidia/nvjitlink/lib"
 )
 
@@ -108,3 +112,4 @@ message(STATUS "libcuopt: Final RPATH = ${rpaths}")
 
 set_property(TARGET cuopt PROPERTY INSTALL_RPATH ${rpaths} APPEND)
 set_property(TARGET cuopt_cli PROPERTY INSTALL_RPATH ${rpaths} APPEND)
+set_property(TARGET cuopt_grpc_server PROPERTY INSTALL_RPATH ${rpaths} APPEND)

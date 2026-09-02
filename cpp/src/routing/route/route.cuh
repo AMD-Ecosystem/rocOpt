@@ -12,6 +12,8 @@
 
 #include <routing/fleet_info.hpp>
 
+#include <thrust/tuple.h>
+
 namespace cuopt {
 namespace routing {
 namespace detail {

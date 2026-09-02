@@ -7,8 +7,12 @@
 
 #pragma once
 
+#include <cuopt/mathematical_optimization/mip/diving_hyper_params.hpp>
+#include <cuopt/mathematical_optimization/mip/submip_hyper_params.hpp>
+#include <cuopt/mathematical_optimization/utilities/internals.hpp>
+
 #include <dual_simplex/logger.hpp>
-#include <dual_simplex/types.hpp>
+#include <math_optimization/types.hpp>
 
 #include <omp.h>
 #include <algorithm>
@@ -18,23 +22,11 @@
 #include <limits>
 #include <vector>
 
-namespace cuopt::linear_programming::dual_simplex {
+namespace cuopt::mathematical_optimization {
+struct benchmark_info_t;
+}
 
-template <typename i_t, typename f_t>
-struct diving_heuristics_settings_t {
-  i_t num_diving_workers = -1;
-
-  // -1 automatic, 0 disabled, 1 enabled
-  i_t line_search_diving = -1;
-  i_t pseudocost_diving  = -1;
-  i_t guided_diving      = -1;
-  i_t coefficient_diving = -1;
-
-  i_t min_node_depth         = 10;
-  i_t node_limit             = 500;
-  f_t iteration_limit_factor = 0.05;
-  i_t backtrack_limit        = 5;
-};
+namespace cuopt::mathematical_optimization::simplex {
 
 template <typename i_t, typename f_t>
 struct simplex_solver_settings_t {
@@ -43,6 +35,8 @@ struct simplex_solver_settings_t {
     : iteration_limit(std::numeric_limits<i_t>::max()),
       node_limit(std::numeric_limits<i_t>::max()),
       time_limit(std::numeric_limits<f_t>::infinity()),
+      work_limit(std::numeric_limits<f_t>::infinity()),
+      branch_and_bound_simplex_iteration_limit(std::numeric_limits<int64_t>::max()),
       absolute_mip_gap_tol(0.0),
       relative_mip_gap_tol(1e-3),
       integer_tol(1e-5),
@@ -73,28 +67,60 @@ struct simplex_solver_settings_t {
       print_presolve_stats(true),
       barrier_presolve(false),
       cudss_deterministic(false),
+      deterministic(false),
       barrier(false),
       eliminate_dense_columns(true),
+      barrier_iterative_refinement(true),
+      barrier_adaptive_regularization(-1),
+      barrier_primal_regularization(-1.0),
+      barrier_dual_regularization(-1.0),
+      barrier_step_scale(0.9),
+      barrier_soc_threshold(100),
       num_gpus(1),
       folding(-1),
       augmented(0),
       dualize(-1),
       ordering(-1),
-      barrier_dual_initial_point(-1),
+      barrier_dual_initial_point(barrier_dual_initial_point_t::Automatic),
+      postsolve_info(-1),
+      barrier_presolve_bound_free_variables(-1),
+      qcqp_ruiz_equilibration(-1),
+      barrier_initial_point_safeguard(10.0),
       check_Q(false),
       crossover(false),
       refactor_frequency(100),
       iteration_log_frequency(1000),
       first_iteration_log(2),
       num_threads(omp_get_max_threads() - 1),
-      num_bfs_workers(std::max(num_threads / 4, 1)),
+      max_cut_passes(0),
+      mir_cuts(-1),
+      mixed_integer_gomory_cuts(-1),
+      knapsack_cuts(-1),
+      flow_cover_cuts(-1),
+      implied_bound_cuts(-1),
+      clique_cuts(-1),
+      zero_half_cuts(-1),
+      strong_chvatal_gomory_cuts(-1),
+      symmetry(-1),
+      reduced_cost_strengthening(-1),
+      cut_change_threshold(1e-3),
+      cut_min_orthogonality(0.5),
+      mip_batch_pdlp_strong_branching(0),
+      mip_batch_pdlp_reliability_branching(0),
+      strong_branching_simplex_iteration_limit(-1),
       random_seed(0),
+      bnb_steal_chance(-1),
+      bnb_nodes_per_steal(-1),
+      bnb_max_steal_attempts(-1),
+      reliability_branching(-1),
       inside_mip(0),
+      inside_submip(0),
+      inside_root_node(0),
       solution_callback(nullptr),
       heuristic_preemption_callback(nullptr),
+      dual_simplex_objective_callback(nullptr),
       concurrent_halt(nullptr)
   {
-    diving_settings.num_diving_workers = std::max(num_threads - num_bfs_workers, 1);
   }
 
   void set_log(bool logging) const { log.log = logging; }
@@ -104,15 +130,18 @@ struct simplex_solver_settings_t {
   i_t iteration_limit;
   i_t node_limit;
   f_t time_limit;
-  f_t absolute_mip_gap_tol;  // Tolerance on mip gap to declare optimal
-  f_t relative_mip_gap_tol;  // Tolerance on mip gap to declare optimal
-  f_t integer_tol;           // Tolerance on integralitiy violation
-  f_t primal_tol;            // Absolute primal infeasibility tolerance
-  f_t dual_tol;              // Absolute dual infeasibility tolerance
-  f_t pivot_tol;             // Simplex pivot tolerance
-  f_t tight_tol;             // A tight tolerance used to check for infeasibility
-  f_t fixed_tol;             // If l <= x <= u with u - l < fixed_tol a variable is consider fixed
-  f_t zero_tol;              // Values below this tolerance are considered numerically zero
+  f_t work_limit;
+  int64_t branch_and_bound_simplex_iteration_limit;  // Limit of the total number of simplex
+                                                     // iterations in B&B
+  f_t absolute_mip_gap_tol;                          // Tolerance on mip gap to declare optimal
+  f_t relative_mip_gap_tol;                          // Tolerance on mip gap to declare optimal
+  f_t integer_tol;                                   // Tolerance on integralitiy violation
+  f_t primal_tol;                                    // Absolute primal infeasibility tolerance
+  f_t dual_tol;                                      // Absolute dual infeasibility tolerance
+  f_t pivot_tol;                                     // Simplex pivot tolerance
+  f_t tight_tol;  // A tight tolerance used to check for infeasibility
+  f_t fixed_tol;  // If l <= x <= u with u - l < fixed_tol a variable is consider fixed
+  f_t zero_tol;   // Values below this tolerance are considered numerically zero
   f_t barrier_relative_feasibility_tol;  // Relative feasibility tolerance for barrier method
   f_t barrier_relative_optimality_tol;   // Relative optimality tolerance for barrier method
   f_t
@@ -139,14 +168,34 @@ struct simplex_solver_settings_t {
   bool barrier_presolve;      // true to use barrier presolve
   bool cudss_deterministic;   // true to use cuDSS deterministic mode, false for non-deterministic
   bool barrier;               // true to use barrier method, false to use dual simplex method
-  bool eliminate_dense_columns;  // true to eliminate dense columns from A*D*A^T
+  bool deterministic;  // true to use B&B deterministic mode, false to use non-deterministic mode
+  bool eliminate_dense_columns;         // true to eliminate dense columns from A*D*A^T
+  bool barrier_iterative_refinement;    // true to use iterative refinement for barrier method
+  int barrier_adaptive_regularization;  // -1 automatic, 0 disabled, 1 enabled
+  f_t barrier_primal_regularization;    // -1 automatic (has_soc ? 1e-8 : 1e-6), else user-specified
+                                        // initial primal regularization (augmented system's (2,2)
+                                        // block) for the first barrier factorization. Adaptive
+                                        // regularization (if enabled) still scales it up/down from
+                                        // this starting point on later iters.
+  f_t barrier_dual_regularization;  // -1 automatic (adaptive_reg ? 1e-8 : 0), else user-specified
+                                    // initial dual regularization (augmented system's (1,1) block
+                                    // diagonal) for the first barrier factorization. Same adaptive
+                                    // caveat as above.
+  f_t barrier_step_scale;           // step scale for barrier method
+  i_t barrier_soc_threshold;        // SOC dimension above which rank-2 sparse scaling is used
   int num_gpus;   // Number of GPUs to use (maximum of 2 gpus are supported at the moment)
   i_t folding;    // -1 automatic, 0 don't fold, 1 fold
   i_t augmented;  // -1 automatic, 0 to solve with ADAT, 1 to solve with augmented system
   i_t dualize;    // -1 automatic, 0 to not dualize, 1 to dualize
   i_t ordering;   // -1 automatic, 0 to use nested dissection, 1 to use AMD
-  i_t barrier_dual_initial_point;  // -1 automatic, 0 to use Lustig, Marsten, and Shanno initial
-                                   // point, 1 to use initial point form dual least squares problem
+  barrier_dual_initial_point_t
+    barrier_dual_initial_point;               // -1 automatic, 0 Lustig-Marsten-Shanno,
+                                              // 1 dual least squares, 2 SeDuMi mu-based
+  i_t postsolve_info;                         // -1 automatic (disabled), 0 disabled, 1 enabled
+  i_t barrier_presolve_bound_free_variables;  // -1 automatic, 0 disabled, 1 enabled
+  i_t qcqp_ruiz_equilibration;          // -1 automatic (imbalance heuristic), 0 disabled, 1 enabled
+  f_t barrier_initial_point_safeguard;  // margin pushing the barrier initial iterate into
+  // the interior of the nonnegative orthant / SOC
   bool check_Q;                    // true to check if Q is positive semidefinite
   bool crossover;                  // true to do crossover, false to not
   i_t refactor_frequency;          // number of basis updates before refactorization
@@ -154,18 +203,65 @@ struct simplex_solver_settings_t {
   i_t first_iteration_log;         // number of iterations to log at beginning of solve
   i_t num_threads;                 // number of threads to use
   i_t random_seed;                 // random seed
-  i_t num_bfs_workers;             // number of threads dedicated to the best-first search
+  i_t max_cut_passes;              // number of cut passes to make
+  i_t mir_cuts;                    // -1 automatic, 0 to disable, >0 to enable MIR cuts
+  i_t mixed_integer_gomory_cuts;   // -1 automatic, 0 to disable, >0 to enable mixed integer Gomory
+                                   // cuts
+  i_t knapsack_cuts;               // -1 automatic, 0 to disable, >0 to enable knapsack cuts
+  i_t flow_cover_cuts;             // -1 automatic, 0 to disable, >0 to enable flow cover cuts
+  i_t implied_bound_cuts;          // -1 automatic, 0 to disable, >0 to enable implied bound cuts
+  i_t clique_cuts;                 // -1 automatic, 0 to disable, >0 to enable clique cuts
+  i_t zero_half_cuts;              // -1 automatic, 0 to disable, >0 to enable zero-half cuts
+  i_t strong_chvatal_gomory_cuts;  // -1 automatic, 0 to disable, >0 to enable strong Chvatal Gomory
+                                   // cuts
+  i_t symmetry;  // -1 automatic, 0 to disable, >0 to enable different symmetry methods
+  i_t reduced_cost_strengthening;  // -1 automatic, 0 to disable, >0 to enable reduced cost
+                                   // strengthening
+  f_t cut_change_threshold;        // threshold for cut change
+  f_t cut_min_orthogonality;       // minimum orthogonality for cuts
+  i_t
+    mip_batch_pdlp_strong_branching;  // 0 = DS only, 1 = cooperative DS + PDLP, 2 = batch PDLP only
+  i_t mip_batch_pdlp_reliability_branching;  // 0 = DS only, 1 = cooperative DS + PDLP, 2 = batch
+                                             // PDLP only
+  // Set the maximum number of simplex iterations allowed per trial branch when applying
+  // strong branching to the root node.
+  // -1 - automatic (iteration limit = 200)
+  // 0, 1 - estimate the objective change using a single pivot of dual simplex
+  // >1 - set as the iteration limit in dual simplex
+  i_t strong_branching_simplex_iteration_limit;
 
-  diving_heuristics_settings_t<i_t, f_t> diving_settings;  // Settings for the diving heuristics
+  mip_diving_hyper_params_t<i_t, f_t> diving_settings;  // Settings for the diving heuristics
+
+  // In B&B, indicate the chance in which a worker can steal a node from another worker.
+  // -1 - automatic (0.05)
+  // 0 - disable
+  // >0 - set the stealing chance [0, 1]
+  f_t bnb_steal_chance;
+  i_t bnb_nodes_per_steal;
+  i_t bnb_max_steal_attempts;
+
+  // Settings for the reliability branching.
+  // - -1: automatic
+  // - 0: disable (use pseudocost branching instead)
+  // - k > 0, a variable is considered reliable if it has been branched on k times.
+  i_t reliability_branching;
 
   i_t inside_mip;  // 0 if outside MIP, 1 if inside MIP at root node, 2 if inside MIP at leaf node
+  i_t inside_submip;     // 0 if in regular MIP solve, 1 if in sub-MIP solve
+  i_t inside_root_node;  // 1 if this is running during the root node, 0 otherwise
+
+  // Settings for the recursive sub-MIP
+  mip_submip_hyper_params_t<i_t, f_t> submip_settings;
+
   std::function<void(std::vector<f_t>&, f_t)> solution_callback;
-  std::function<void(const std::vector<f_t>&, f_t)> node_processed_callback;
   std::function<void()> heuristic_preemption_callback;
   std::function<void(std::vector<f_t>&, std::vector<f_t>&, f_t)> set_simplex_solution_callback;
+  std::function<void(f_t)> dual_simplex_objective_callback;  // Called with current dual obj
   mutable logger_t log;
   std::atomic<int>* concurrent_halt;  // if nullptr ignored, if !nullptr, 0 if solver should
                                       // continue, 1 if solver should halt
+  // Optional non-owning pointer to run-level benchmark stats.
+  benchmark_info_t* benchmark_info_ptr = nullptr;
 };
 
-}  // namespace cuopt::linear_programming::dual_simplex
+}  // namespace cuopt::mathematical_optimization::simplex

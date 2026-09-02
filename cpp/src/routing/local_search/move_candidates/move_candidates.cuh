@@ -1,7 +1,7 @@
 #include "hip/hip_runtime.h"
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -23,7 +23,7 @@
 #include "scross_move_candidates.cuh"
 #include "vrp_move_candidates.cuh"
 
-#include <raft/common/nvtx.hpp>
+#include <raft/core/nvtx.hpp>
 #include <raft/random/rng_device.cuh>
 
 #include <rmm/device_scalar.hpp>
@@ -122,10 +122,10 @@ class move_path_t {
     }
   }
 
+  /// Reset per-iteration move state
   void reset(solution_handle_t<i_t, f_t> const* sol_handle)
   {
-    constexpr i_t zero_val = 0;
-    n_insertions.set_value_async(zero_val, sol_handle->get_stream());
+    n_insertions.set_value_to_zero_async(sol_handle->get_stream());
     async_fill(loop_closed, 1, sol_handle->get_stream());
     async_fill(changed_routes, 0, sol_handle->get_stream());
   }
