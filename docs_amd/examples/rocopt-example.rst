@@ -8,7 +8,7 @@
 rocOpt examples
 ********************************************************************
 
-The rocOpt examples can be found in GitHub under the https://github.com/AMD-Ecosystem/rocopt/tree/amd-integration/examples_notebook folder.
+The rocOpt examples can be found in GitHub under the https://github.com/AMD-Ecosystem/rocOpt/tree/release/rocopt-26.07 folder.
 The examples include the following three notebooks to demonstrate vehicle routing problems, large-scale linear programming, and mixed-integer
 linear programming. 
 
@@ -47,7 +47,7 @@ Vehicle routing problem notebook (``cvrptw_benchmark_rocopt.ipynb``)
 
 A 1000-customer Gehring & Homberger CVRPTW instance (``C1_10_1``, best known
 cost 42 478.95 with 100 vehicles). Restart the kernel and run all cells.
-The single solve is capped at 60 s for demo runtime; the upstream NVIDIA
+The single solve is capped at 60 s for demo runtime; the upstream
 notebook chains a 10 s + 120 s pair.
 
 Run-to-run variance of a few percent is expected. cuOpt's routing solver is
@@ -62,7 +62,7 @@ through the algebraic-modeling Python API.
 
 The solver method is pinned to **PDLP only** (``method=1``) on rocopt. The
 default ``method=0`` (Concurrent) launches a Barrier solver thread alongside
-PDLP, but Barrier requires cuDSS, which is NVIDIA-only. On rocopt the missing
+PDLP, but Barrier requires cuDSS, which is not currently supported on ROCm. On rocopt the missing
 dispatcher path can deadlock a re-solve of the same ``Problem`` object — most
 visibly in the MILP notebook, which solves the LP relaxation twice.
 
@@ -288,32 +288,3 @@ directory:
      rocopt:amd-integration
 
 Then launch Jupyter with ``--notebook-dir /workspace/examples_notebook``.
-
-Per-notebook details
----------------------
-
-The following provide specific details for two of the notebooks. 
-
-Routing benchmark (``cvrptw_benchmark_rocopt.ipynb``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A 1000-customer Gehring & Homberger CVRPTW instance (``C1_10_1``, best known
-cost 42 478.95 with 100 vehicles). Restart the kernel and run all cells.
-The single solve is capped at 60 s for demo runtime; the upstream NVIDIA
-notebook chains a 10 s + 120 s pair.
-
-Run-to-run variance of a few percent is expected. cuOpt's routing solver is
-a randomized parallel local-search metaheuristic; identical inputs do not
-produce bit-identical outputs across GPU runs.
-
-Diet optimization (``diet_optimization_lp.ipynb`` and ``..._milp.ipynb``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Solve the classic USDA diet LP (and an MILP variant with integer servings)
-through the algebraic-modeling Python API.
-
-The solver method is pinned to **PDLP only** (``method=1``) on rocopt. The
-default ``method=0`` (Concurrent) launches a Barrier solver thread alongside
-PDLP, but Barrier requires cuDSS, which is NVIDIA-only. On rocopt the missing
-dispatcher path can deadlock a re-solve of the same ``Problem`` object — most
-visibly in the MILP notebook, which solves the LP relaxation twice.
