@@ -8,14 +8,15 @@
 rocOpt documentation
 ********************************************************************
 
-rocOpt is part of the AMD Data Science toolkit, an open-source software collection for high-performance data science applications. 
+rocOpt is part of the `AMD Data Science toolkit <https://rocm.docs.amd.com/projects/rocm-ds/en/latest/>`__,
+an open-source software collection for high-performance data science applications.
 Forked from the RAPIDS® cuOpt project, rocOpt brings the same GPU-accelerated software library to the
 :doc:`ROCm <rocm:index>`/:doc:`HIP <hip:index>` stack while preserving API compatibility. 
 
 rocOpt is designed for large-scale decision and route optimization. For more information, see :doc:`What is rocOpt? <what_is_rocopt>`
 
 The rocOpt code is open and hosted at
-`https://github.com/AMD-Ecosystem/rocopt <https://github.com/AMD-Ecosystem/rocopt>`_.
+`https://github.com/AMD-Ecosystem/rocopt <https://github.com/AMD-Ecosystem/rocopt>`__.
 
 .. grid:: 2
   :gutter: 3
