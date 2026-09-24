@@ -30,12 +30,12 @@ requirements:
     - pip
     - python =${{ py_version }}
     - rapids-build-backend >=0.4.0,<0.5.0
-    - setuptools>=77.0.0
+    - setuptools>=80.10.2
   run:
     - cuopt =${{ version }}
     - fastapi >=0.104.1
     - jsonref =1.1.0
-    - msgpack-python =1.1.0
+    - msgpack-python =1.2.1
     - msgpack-numpy =0.4.8
     - numpy >=1.23,<3.0
     - pandas>=2

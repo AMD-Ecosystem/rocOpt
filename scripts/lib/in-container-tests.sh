@@ -108,9 +108,21 @@ fi
 # Environment activation
 # ---------------------------------------------------------------------------
 log_step "Activating conda env: ${CONDA_ENV}"
-# shellcheck disable=SC1091
-source "${CONDA_DIR}/bin/activate" "${CONDA_ENV}" \
-    || die "could not activate conda env '${CONDA_ENV}' under ${CONDA_DIR}"
+if [ -f "${CONDA_DIR}/bin/activate" ]; then
+    # Builder/developer images retain conda and can use normal activation.
+    # shellcheck disable=SC1091
+    source "${CONDA_DIR}/bin/activate" "${CONDA_ENV}" \
+        || die "could not activate conda env '${CONDA_ENV}' under ${CONDA_DIR}"
+else
+    # Release images intentionally contain only the application environment,
+    # not Miniforge's vulnerable package-manager base.
+    export CONDA_PREFIX="${CONDA_DIR}/envs/${CONDA_ENV}"
+    export CONDA_DEFAULT_ENV="${CONDA_ENV}"
+    export PATH="${CONDA_PREFIX}/bin:${PATH}"
+    hash -r
+    [ -x "${CONDA_PREFIX}/bin/python" ] \
+        || die "conda env '${CONDA_ENV}' not found under ${CONDA_DIR}"
+fi
 
 mkdir -p "${RESULTS_DIR}"
 

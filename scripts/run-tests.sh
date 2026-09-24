@@ -204,7 +204,14 @@ if [ "${REBUILD}" -eq 1 ]; then
     # about non-expansion is exactly the behavior we want.
     # shellcheck disable=SC2016
     CMD+='
-        source ${CONDA_DIR:-/root/miniforge3}/bin/activate cuopt_dev;
+        CONDA_DIR=${CONDA_DIR:-/root/miniforge3};
+        if [ -f "${CONDA_DIR}/bin/activate" ]; then
+            source "${CONDA_DIR}/bin/activate" cuopt_dev;
+        else
+            export CONDA_PREFIX="${CONDA_DIR}/envs/cuopt_dev";
+            export CONDA_DEFAULT_ENV=cuopt_dev;
+            export PATH="${CONDA_PREFIX}/bin:${PATH}";
+        fi;
         source /rocopt-release/scripts/detect_rocopt_gpu_arch.sh 2>/dev/null || true;
         export PARALLEL_LEVEL=$(nproc);
         cd /rocopt-release;

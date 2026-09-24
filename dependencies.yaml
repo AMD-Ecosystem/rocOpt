@@ -266,8 +266,8 @@ dependencies:
       - output_types: [requirements, pyproject]
         packages:
           - *rapids_build_backend
-          - setuptools>=77.0.0
-          - wheel
+          - setuptools>=80.10.2
+          - wheel>=0.46.2
   build_common:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -316,8 +316,8 @@ dependencies:
     common:
       - output_types: [requirements, pyproject]
         packages:
-          - wheel
-          - setuptools>=77.0.0
+          - wheel>=0.46.2
+          - setuptools>=80.10.2
   run_common:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -377,10 +377,10 @@ dependencies:
           - &requests requests
       - output_types: [requirements, pyproject]
         packages:
-          - &msgpack msgpack==1.1.0
+          - &msgpack msgpack==1.2.1
       - output_types: conda
         packages:
-          - &msgpack_python msgpack-python==1.1.0
+          - &msgpack_python msgpack-python==1.2.1
 
   run_cuopt_server:
     common:

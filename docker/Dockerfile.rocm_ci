@@ -10,8 +10,8 @@
 #                   conda env with the packages installed, the built shared libraries,
 #                   the C++ gtest binaries under cpp/build/, and the datasets/ tree.
 #                   It is not a minimal runtime image: the build toolchain is gone, but
-#                   the full miniforge tree and the C++ test binaries are intentionally
-#                   present because the tester needs them (see the COPY steps below).
+#                   the application env and C++ test binaries are intentionally present
+#                   because the tester needs them (see the COPY steps below).
 #   whl_export    — Scratch image exporting only the wheel file (for artifact upload).
 #
 # Build-time arguments (all passed by the builder entrypoint from the env file):
@@ -115,7 +115,7 @@ ENV CXX=/opt/rocm/bin/amdclang++
 ENV CMAKE_HIP_COMPILER_ROCM_ROOT=/opt/rocm
 ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake
 ENV PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/opt/rocm/lib:/opt/rocm/lib64:${LD_LIBRARY_PATH:-}
+ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/opt/rocm/lib:/opt/rocm/lib64
 ENV HSA_ENABLE_SDMA=0
 ENV GPU_MAX_HW_QUEUES=8
 ENV ROCM_HOME=/opt/rocm
@@ -154,6 +154,7 @@ RUN ACTUAL=$(ls -d /opt/rocm/llvm/lib/clang/[0-9]* 2>/dev/null | head -1) && \
 # Copy the rocopt source tree from the named BuildKit context
 # The builder entrypoint registers it as: --local rocopt_src=<host-path>
 COPY --from=rocopt_src . /rocopt-release
+ENV PIP_CONSTRAINT=/rocopt-release/rocm_pip_constraints.txt
 
 # Copy ROCmDS-cmake from its own named BuildKit context so cmake uses the
 # pre-fetched local checkout instead of downloading via FetchContent at build time.
@@ -341,6 +342,12 @@ RUN set -euo pipefail && \
     done && \
     echo "Wheels in dist/:" && ls -lh /rocopt-release/dist/
 
+# Guard against transitive installs downgrading packages below patched
+# versions after the initial requirements installation.
+RUN source "${CONDA_DIR}/bin/activate" "${CONDA_ENV_NAME}" && \
+    python /rocopt-release/ci/verify_security_versions.py && \
+    ( pip check || echo "[rocopt] pip check reported pre-existing dependency metadata mismatches (informational only; librocopt/rocopt-mps-parser declare NVIDIA/cmake/ninja deps that this ROCm build satisfies via conda/apt instead of pip)" )
+
 # Normalize any hardcoded versioned ROCm paths in the conda env / source tree
 # back to the portable /opt/rocm symlink.  AMD PyPI/conda packages (e.g.
 # hip-python, libomp configs) can embed an absolute path like
@@ -400,6 +407,13 @@ RUN set -euo pipefail && \
     done && \
     echo "[rocopt] patchelf normalised ${PATCHED} object(s)"
 
+# CMake materializes upstream RAFT/RMM repositories under cpp/build/_deps.
+# Their Dockerfiles are not used to build or run this image; remove them so
+# image filesystem scanners do not treat vendored examples as active configs.
+RUN find /rocopt-release/cpp/build/_deps -type f \
+        \( -iname 'Dockerfile' -o -iname '*.dockerfile' \) \
+        -delete 2>/dev/null || true
+
 ENV DEBIAN_FRONTEND=""
 
 # ---------------------------------------------------------------------------
@@ -422,26 +436,42 @@ ENV ROCM_PATH=/opt/rocm
 ENV HIP_PATH=/opt/rocm
 ENV HIP_PLATFORM=amd
 ENV PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/opt/rocm/lib:/opt/rocm/lib64:${LD_LIBRARY_PATH:-}
+ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/opt/rocm/lib:/opt/rocm/lib64
 ENV HSA_ENABLE_SDMA=0
 ENV GPU_MAX_HW_QUEUES=8
 ENV ROCM_HOME=/opt/rocm
 ENV CUPY_INSTALL_USE_HIP=1
 
 ENV CONDA_DIR=/root/miniforge3
-# Everything is installed into the ${CONDA_ENV_NAME} env, NOT into conda's base
-# env, so the env's bin/ must come first on PATH.  With only ${CONDA_DIR}/bin
-# leading, `docker run <image> python -c "import cuopt"` resolves base's
-# interpreter and fails — the packages are one directory over.  CI did not catch
-# this because the tester entrypoint activates the env by hand, but this is the
-# published artifact and it has to work as-is.
+# Everything is installed into the ${CONDA_ENV_NAME} env. The release stage
+# copies that env without conda's base, so its bin/ must be first on PATH.
 ENV CONDA_ENV_NAME=${CONDA_ENV_NAME}
 ENV CONDA_PREFIX=${CONDA_DIR}/envs/${CONDA_ENV_NAME}
 ENV CONDA_DEFAULT_ENV=${CONDA_ENV_NAME}
-ENV PATH=${CONDA_PREFIX}/bin:${CONDA_DIR}/bin:${PATH}
+ENV PATH=${CONDA_PREFIX}/bin:${PATH}
 
-# Carry over the full conda env from the build stage (wheels + site-packages)
-COPY --from=rocopt_build ${CONDA_DIR} ${CONDA_DIR}
+# Apply current Ubuntu security updates to the release stage. This upgrades
+# OpenSSL/libssl and linux-libc-dev inherited from the ROCm base image.
+RUN apt-get update && \
+    apt-get dist-upgrade -y --no-install-recommends && \
+    OPENSSL_VERSION=$(dpkg-query -W -f='${Version}' openssl) && \
+    dpkg --compare-versions "${OPENSSL_VERSION}" ge 3.0.13-0ubuntu3.11 && \
+    LIBSSL_VERSION=$(dpkg-query -W -f='${Version}' libssl3t64) && \
+    dpkg --compare-versions "${LIBSSL_VERSION}" ge 3.0.13-0ubuntu3.11 && \
+    if dpkg-query -W linux-libc-dev >/dev/null 2>&1; then \
+        LINUX_LIBC_VERSION=$(dpkg-query -W -f='${Version}' linux-libc-dev); \
+        dpkg --compare-versions "${LINUX_LIBC_VERSION}" ge 6.8.0-139.139; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
+
+# Carry only the application environment. Miniforge's base package manager
+# (including its embedded rattler Rust binary) is unnecessary at runtime.
+COPY --from=rocopt_build ${CONDA_PREFIX} ${CONDA_PREFIX}
+COPY --from=rocopt_build /rocopt-release/ci/verify_security_versions.py \
+    /usr/local/libexec/rocopt/verify_security_versions.py
+RUN test ! -e "${CONDA_DIR}/bin/conda" && \
+    python /usr/local/libexec/rocopt/verify_security_versions.py && \
+    ( pip check || echo "[rocopt] pip check reported pre-existing dependency metadata mismatches (informational only; librocopt/rocopt-mps-parser declare NVIDIA/cmake/ninja deps that this ROCm build satisfies via conda/apt instead of pip)" )
 
 # /opt/rocm is already present from the base image; no need to copy it from the
 # build stage (doing so would duplicate the entire ROCm tree into an extra layer).

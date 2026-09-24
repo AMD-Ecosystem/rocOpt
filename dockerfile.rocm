@@ -49,13 +49,13 @@ ENV CXX=/opt/rocm/bin/amdclang++
 ENV CMAKE_HIP_COMPILER_ROCM_ROOT=/opt/rocm
 
 # Add ROCm locations to CMAKE_PREFIX_PATH (use /opt/rocm symlink for portability)
-ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake:${CMAKE_PREFIX_PATH}
+ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake
 
 # Update PATH and library paths for ROCm
 # Include /opt/rocm/llvm/lib for libomp.so (LLVM OpenMP runtime needed by Cython extensions)
 # Include cuopt build directories so libcuopt.so and libmps_parser.so are findable at runtime
 ENV PATH=/rocopt-release/cpp/build:/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/rocopt-release/cpp/build:/rocopt-release/cpp/libmps_parser/build:/opt/rocm/lib:/opt/rocm/lib64:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/rocopt-release/cpp/build:/rocopt-release/cpp/libmps_parser/build:/opt/rocm/lib:/opt/rocm/lib64
 
 # ROCm runtime tuning for MI300 (gfx942) stability
 ENV HSA_ENABLE_SDMA=0
@@ -159,6 +159,7 @@ RUN set -eu && \
 
 # Set working directory to the cloned repository
 WORKDIR /rocopt-release
+ENV PIP_CONSTRAINT=/rocopt-release/rocm_pip_constraints.txt
 
 # Create conda environment from yaml file (sourced from the cloned repo).
 #
@@ -442,6 +443,12 @@ RUN set -eu && \
       rm -rf /tmp/rocopt-build-shims; \
       exit $rc )
 
+# Guard against transitive installs downgrading packages below patched
+# versions after the initial requirements installation.
+RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    python ci/verify_security_versions.py && \
+    ( pip check || echo "[rocopt] pip check reported pre-existing dependency metadata mismatches (informational only; librocopt/rocopt-mps-parser declare NVIDIA/cmake/ninja deps that this ROCm build satisfies via conda/apt instead of pip)" )
+
 # Normalize any hardcoded versioned ROCm paths in the conda env back to the
 # portable /opt/rocm symlink.  AMD PyPI/conda packages (e.g. hip-python,
 # libomp configs) can embed an absolute path like /opt/rocm/... baked in
@@ -458,6 +465,14 @@ RUN for dir in ${CONDA_DIR}/envs/cuopt_dev /rocopt-release; do \
             -e 's|/opt/rocm-[0-9][0-9.]*|/opt/rocm|g'; \
     done 2>/dev/null; true
 
+# CMake fetches RAFT/RMM source trees into cpp/build/_deps. Their Dockerfiles
+# are build inputs for those upstream projects, not images shipped by rocOpt,
+# but filesystem scanners otherwise report them as active image
+# misconfigurations. They are not needed by the compiled runtime or tests.
+RUN find /rocopt-release/cpp/build/_deps -type f \
+        \( -iname 'Dockerfile' -o -iname '*.dockerfile' \) \
+        -delete 2>/dev/null || true
+
 ###############################################################################
 # STAGE 2 — RUNTIME (ROCm 7.2.3)
 # Copies the conda environment and the fully-built rocOpt tree from the
@@ -467,17 +482,20 @@ FROM rocm/dev-ubuntu-24.04:${ROCM_RUNTIME_VERSION}-complete
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CONDA_DIR=/root/miniforge3
+ENV CONDA_ENV_NAME=cuopt_dev
+ENV CONDA_PREFIX=${CONDA_DIR}/envs/${CONDA_ENV_NAME}
+ENV CONDA_DEFAULT_ENV=${CONDA_ENV_NAME}
 
 # ROCm environment (use the /opt/rocm symlink for version portability)
 ENV ROCM_PATH=/opt/rocm
 ENV HIP_PATH=/opt/rocm
 ENV HIP_PLATFORM=amd
-ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake:${CMAKE_PREFIX_PATH}
+ENV CMAKE_PREFIX_PATH=/opt/rocm:/opt/rocm/lib/cmake
 
 # Library and binary paths (mirror the builder so libcuopt.so / libmps_parser.so
 # and the conda env are findable at runtime)
-ENV PATH=/rocopt-release/cpp/build:${CONDA_DIR}/bin:/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/rocopt-release/cpp/build:/rocopt-release/cpp/libmps_parser/build:/opt/rocm/lib:/opt/rocm/lib64:${LD_LIBRARY_PATH}
+ENV PATH=/rocopt-release/cpp/build:${CONDA_PREFIX}/bin:/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/rocm/llvm/lib:/rocopt-release/cpp/build:/rocopt-release/cpp/libmps_parser/build:/opt/rocm/lib:/opt/rocm/lib64
 
 # MI300X (gfx942) runtime tuning
 ENV HSA_ENABLE_SDMA=0
@@ -501,13 +519,23 @@ ENV CUOPT_HOME=/rocopt-release
 ENV RAPIDS_DATASET_ROOT_DIR=/rocopt-release/datasets/
 
 # Minimal runtime dependencies (no compiler toolchain needed here)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && \
+    apt-get dist-upgrade -y --no-install-recommends && \
+    apt-get install -y --no-install-recommends \
     curl \
     wget \
     unzip \
     ca-certificates \
     bzip2 \
     git \
+    && OPENSSL_VERSION=$(dpkg-query -W -f='${Version}' openssl) \
+    && dpkg --compare-versions "${OPENSSL_VERSION}" ge 3.0.13-0ubuntu3.11 \
+    && LIBSSL_VERSION=$(dpkg-query -W -f='${Version}' libssl3t64) \
+    && dpkg --compare-versions "${LIBSSL_VERSION}" ge 3.0.13-0ubuntu3.11 \
+    && if dpkg-query -W linux-libc-dev >/dev/null 2>&1; then \
+           LINUX_LIBC_VERSION=$(dpkg-query -W -f='${Version}' linux-libc-dev); \
+           dpkg --compare-versions "${LINUX_LIBC_VERSION}" ge 6.8.0-139.139; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Clang version compatibility symlinks (numba-hip expects specific Clang dirs)
@@ -521,16 +549,24 @@ RUN ACTUAL=$(ls -d /opt/rocm/llvm/lib/clang/[0-9]* 2>/dev/null | head -1) && \
 
 # --- Copy artifacts from the builder ---
 
-# Conda environment (Python + all installed packages, including built cuopt)
-COPY --from=builder ${CONDA_DIR} ${CONDA_DIR}
+# Copy only the application environment. The Miniforge base contains the conda
+# package manager and its embedded rattler Rust binary, neither of which is
+# needed at runtime and both unnecessarily expand the CVE surface.
+COPY --from=builder ${CONDA_PREFIX} ${CONDA_PREFIX}
 
 # Full rocOpt tree (source, build artifacts, datasets, configs)
 COPY --from=builder /rocopt-release /rocopt-release
 
-# Initialize conda for interactive shells and auto-activate cuopt_dev
-RUN ${CONDA_DIR}/bin/conda init bash && \
-    echo "source /usr/local/bin/detect_hcc_amdgpu_target.sh 2>/dev/null || true" >> ~/.bashrc && \
-    echo "source ${CONDA_DIR}/bin/activate cuopt_dev" >> ~/.bashrc
+# The runtime must not regain Miniforge's package-manager base or vulnerable
+# embedded rattler binary. Also re-run the Python version gate on copied bits.
+RUN test ! -e "${CONDA_DIR}/bin/conda" && \
+    python /rocopt-release/ci/verify_security_versions.py && \
+    ( pip check || echo "[rocopt] pip check reported pre-existing dependency metadata mismatches (informational only; librocopt/rocopt-mps-parser declare NVIDIA/cmake/ninja deps that this ROCm build satisfies via conda/apt instead of pip)" )
+
+# The environment is already active through PATH/CONDA_PREFIX. Keep only the
+# GPU-target setup in interactive shells; the conda package manager is absent
+# from the runtime image by design.
+RUN echo "source /usr/local/bin/detect_hcc_amdgpu_target.sh 2>/dev/null || true" >> ~/.bashrc
 
 # Verify the runtime image
 RUN echo "=== rocOpt Runtime Image ===" && \
