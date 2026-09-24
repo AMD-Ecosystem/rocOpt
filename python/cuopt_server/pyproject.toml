@@ -4,8 +4,8 @@
 [build-system]
 build-backend = "setuptools.build_meta"
 requires = [
-    "setuptools>=77.0.0",
-    "wheel",
+    "setuptools>=80.10.2",
+    "wheel>=0.46.2",
 ] # Modified for ROCm-DS: bypass rapids-build-backend, use setuptools directly.
 
 [project]
@@ -24,7 +24,7 @@ dependencies = [
     "fastapi",
     "jsonref==1.1.0",
     "msgpack-numpy==0.4.8",
-    "msgpack==1.1.0",
+    "msgpack==1.2.1",
     "numpy>=1.23.5,<3.0",
     "pandas>=2.0",
     "psutil>=6.0.0",
@@ -43,7 +43,7 @@ classifiers = [
 test = [
     "jsonref==1.1.0",
     "msgpack-numpy==0.4.8",
-    "msgpack==1.1.0",
+    "msgpack==1.2.1",
     "pexpect",
     "pytest-cov",
     "pytest<9.0",
