@@ -1,18 +1,18 @@
 .. meta::
-   :description: Python API reference for rocopt, covering linear programming, quadratic programming, mixed integer linear programming, and vehicle routing problem classes and functions.
+   :description: Python API reference for rocOpt, covering linear programming, quadratic programming, mixed integer linear programming, and vehicle routing problem classes and functions.
    :keywords: rocopt, Python, API, LP, MILP, QP, VRP, routing, ROCm, optimization, cuopt
 
 ====================
 Python API reference
 ====================
 
-This page documents the Python API for rocopt, covering both the ``libcuopt`` Python wrappers (Cython-based) and the ``cuopt`` Python package. The Python API provides access to linear programming (LP), mixed integer linear programming (MILP), quadratic programming (QP) solvers, and vehicle routing problem (VRP) solvers.
+This page documents the Python API for rocOpt, covering both the ``libcuopt`` Python wrappers (Cython-based) and the ``cuopt`` Python package. The Python API provides access to linear programming (LP), mixed integer linear programming (MILP), quadratic programming (QP) solvers, and vehicle routing problem (VRP) solvers.
 
 For the corresponding C and C++ APIs, see :doc:`/reference/c-api-reference`.
 
 .. note::
 
-   The Python API is built on Cython wrappers that call into the rocopt C++ solver libraries. The internal bridge modules (``cython_solve`` for LP and ``cython`` for routing) are not part of the public API and are not documented here.
+   The Python API is built on Cython wrappers that call into the rocOpt C++ solver libraries. The internal bridge modules (``cython_solve`` for LP and ``cython`` for routing) are not part of the public API and are not documented here.
 
 Linear programming
 ******************
@@ -21,7 +21,7 @@ The linear programming Python API provides classes and functions for defining an
 
 .. note::
 
-   The source material available does not contain the full Python-level docstrings, class definitions, or function signatures for the LP Python API. The sections below describe the API surface based on the C++ types that the Python wrappers expose. Consult the installed package help (``help(cuopt)``) or the generated API docs shipped with rocopt for complete Python signatures and parameter details.
+   The source material available does not contain the full Python-level docstrings, class definitions, or function signatures for the LP Python API. The sections below describe the API surface based on the C++ types that the Python wrappers expose. Consult the installed package help (``help(cuopt)``) or the generated API docs shipped with rocOpt for complete Python signatures and parameter details.
 
 Optimization problem
 --------------------
@@ -132,7 +132,7 @@ Vehicle routing
 
 The vehicle routing Python API provides classes for defining and solving vehicle routing problems, including TSP, VRP, and pickup-and-delivery problems. These classes wrap the C++ routing API through Cython bindings.
 
-For a complete walkthrough, see :doc:`../examples/rocopt-examples`.
+For a complete walkthrough, see :ref:`rocopt-example`.
 
 DataModelView
 -------------

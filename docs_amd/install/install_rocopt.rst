@@ -37,7 +37,7 @@ Compatibility Matrix
         
 .. note::
       
-   ROCm version compatibility: This release of rocOpt is built against ROCm 7.1.1 and is intended to run on ROCm 7.2.3. This configuration serves as a workaround for a build issue identified in ROCm 7.2.3. The issue has been fixed for future releases. 
+   ROCm version compatibility: This release of rocOpt is built against ROCm 7.1.1 and is intended to run on ROCm 7.2.3. This configuration serves as a workaround for a build issue identified in ROCm 7.2.3. 
 
 Option 1: Use a prebuilt Docker image
 =====================================

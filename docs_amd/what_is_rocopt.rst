@@ -12,9 +12,9 @@ rocOpt is an open-source, GPU-accelerated engine for decision optimization on AM
 GPUs through the ROCm software stack. It solves large-scale linear programming (LP),
 mixed-integer linear programming (MILP), quadratic programming (QP), and vehicle routing
 problems containing millions of variables and constraints, returning near real-time results on
-AMD Instinct MI300X and MI355X GPUs through the ROCm software stack.
+AMD Instinct MI300X and MI355X GPUs.
 
-rocOpt is aligned with and API-compatible with NVIDIA cuOpt 25.10, so you can run
+rocOpt is aligned with and API-compatible with cuOpt 25.10, so you can run
 existing cuOpt workloads and optimization pipelines on AMD Instinct GPUs without
 rewriting client code.
 
@@ -48,10 +48,10 @@ the ROCm 7.2.3 runtime. This includes the following features:
   - Server API — serve optimization requests over HTTP with a cuOpt-compatible
     interface.
 
-- rocOpt is built on the ROCm Data Science (ROCm-DS) stack — a HIP port of NVIDIA's
+- rocOpt is built on the AMD Data Science stack — a HIP port
   cuOpt that maps RAPIDS-style dependencies to their ROCm equivalents (hipRAFT, hipMM,
   rocThrust, hipCUB, rocPRIM, hipSPARSE, hipBLAS, hipSOLVER) so workloads run on
-  AMD Instinct hardware alongside other ROCm-DS libraries such as hipDF.
+  AMD Instinct hardware alongside other AMD Data Science libraries such as hipDF.
 
 - rocOpt supports concrete decision-optimization use cases where GPU acceleration
   changes what is tractable in production, including:
@@ -63,6 +63,6 @@ the ROCm 7.2.3 runtime. This includes the following features:
 
 .. note::
 
-   The Barrier (interior-point) LP solver depends on the NVIDIA cuDSS sparse direct
+   The Barrier (interior-point) LP solver depends on the cuDSS sparse direct
    solver, and has no ROCm equivalent in this release. Use PDLP for large LPs and
    dual simplex for smaller problems.
