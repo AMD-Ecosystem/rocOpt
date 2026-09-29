@@ -554,6 +554,20 @@ RUN ACTUAL=$(ls -d /opt/rocm/llvm/lib/clang/[0-9]* 2>/dev/null | head -1) && \
 # needed at runtime and both unnecessarily expand the CVE surface.
 COPY --from=builder ${CONDA_PREFIX} ${CONDA_PREFIX}
 
+# Python's stdlib `ensurepip` module ships a static, never-executed bootstrap
+# wheel at ensurepip/_bundled/pip-*.whl, used only to bootstrap pip into a
+# brand-new venv (`python -m venv` / `python -m ensurepip`). This image never
+# runs either, so the wheel is dead weight -- but pip's own
+# pip/_vendor/vendor.txt inside it pins msgpack==1.1.2 and setuptools==70.3.0
+# as pip's internal vendored-tool versions (setuptools isn't even bundled as
+# code there, just named in that text file). Trivy's SBOM analyzer reads
+# vendor.txt and flags both as vulnerable (GHSA-6v7p-g79w-8964,
+# CVE-2025-47273), even though pip's vendored msgpack lives at
+# pip._vendor.msgpack -- entirely separate from the real top-level msgpack
+# install above -- and the wheel is never extracted in the first place.
+# Delete it so the dormant version strings stop showing up in scans.
+RUN find "${CONDA_PREFIX}" -path '*/ensurepip/_bundled/*.whl' -print -delete
+
 # Full rocOpt tree (source, build artifacts, datasets, configs)
 COPY --from=builder /rocopt-release /rocopt-release
 
