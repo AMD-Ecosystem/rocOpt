@@ -188,6 +188,14 @@ RUN set -euo pipefail && \
     echo "[rocopt] conda env ${CONDA_ENV_NAME} python=${ACTUAL_PY} (matches PYTHON_VERSION)" && \
     conda clean -afy
 
+# Strip the dormant ensurepip bootstrap wheel as soon as the env exists, not
+# just in the rocopt_base stage. verify_security_versions.py (invoked later in
+# *this* stage too, right after building the wheels) checks for it, and conda
+# creates it fresh as part of installing python -- before that later check
+# ever runs. See the rocopt_base-stage COPY below for the full rationale.
+RUN source "${CONDA_DIR}/bin/activate" "${CONDA_ENV_NAME}" && \
+    find "${CONDA_PREFIX}" -path '*/ensurepip/_bundled/*.whl' -print -delete
+
 # Install AMD ROCm-DS Python packages and apply libclang workaround.
 # Per-package install source:
 #   - AMD_<PKG>_WHEEL_URL non-empty → install that wheel directly
