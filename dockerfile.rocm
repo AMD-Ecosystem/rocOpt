@@ -200,6 +200,14 @@ RUN source ${CONDA_DIR}/bin/activate && \
         { echo "ERROR: conda solved to python ${python_ver}, expected ${ROCOPT_PYTHON_VERSION}"; exit 1; } && \
     conda clean -afy
 
+# Strip the dormant ensurepip bootstrap wheel as soon as the env exists, not
+# just in the runtime stage. verify_security_versions.py (invoked later in
+# *this* stage too, right after building the wheels) checks for it, and conda
+# creates it fresh as part of installing python -- before that later check
+# ever runs. See the runtime-stage COPY below for the full rationale.
+RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    find "${CONDA_PREFIX}" -path '*/ensurepip/_bundled/*.whl' -print -delete
+
 # Activate conda environment and install pip requirements
 RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
     pip install -r /rocopt-release/requirements.txt
