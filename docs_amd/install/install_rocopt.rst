@@ -42,7 +42,7 @@ Compatibility Matrix
 Option 1: Use a prebuilt Docker image
 =====================================
 
-The prebuilt image contains a fully configured rocOpt installation and all required dependencies pre-installed.
+The prebuilt docker image contains a fully configured rocOpt installation and all required dependencies pre-installed. The image can be found at `https://hub.docker.com/r/rocm/rocopt/tags <https://hub.docker.com/r/rocm/rocopt/tags>`__.
 
 1. Pull the Docker image.
 
