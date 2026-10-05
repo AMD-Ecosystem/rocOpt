@@ -1,0 +1,33 @@
+# Trivy vulnerability ignore list for rocOpt container images
+#
+# See VULNERABILITY_EXCEPTIONS.md for full justification and review record.
+# Do not add an entry here without a matching section in that file.
+#
+# Format: <CVE/GHSA-ID>  exp:<YYYY-MM-DD>  # one-line reason
+# The exp: date forces Trivy to stop suppressing the finding and fail the
+# scan again at the next review date, so stale ignores can't go unnoticed.
+#
+# Last reviewed: 2026-10-05
+# Source scan:   trivy-reports (4).zip, rocopt-1.0.0.amd0_rocm7.2.3.ubuntu24.04_py3.13, 2026-10-01
+#
+# Root cause: all four findings come from a dormant, unused `ensurepip`
+# bootstrap wheel bundled by stock CPython 3.13, which carries pip's own
+# vendored copies of msgpack/urllib3 and a text-only setuptools version
+# reference. Already fixed in source (commits a6b0d032, 0b4268d1, e2fba1f6
+# on amd-integration) by stripping that wheel from the image. These entries
+# are suppressed only until a freshly rebuilt image confirms the findings
+# are gone -- then delete these lines rather than renewing the exp: date.
+
+# msgpack - pip's vendored copy inside the dormant ensurepip wheel; real
+# top-level msgpack installed is 1.2.1 (fixed). Fix already merged.
+GHSA-6v7p-g79w-8964 exp:2026-10-15 # msgpack: pip-vendored copy in dormant ensurepip wheel, fix merged e2fba1f6
+
+# setuptools - version string referenced inside the same dormant wheel;
+# real top-level setuptools installed is 80.10.2 (fixed). Fix already merged.
+CVE-2025-47273 exp:2026-10-15 # setuptools: referenced in dormant ensurepip wheel, fix merged e2fba1f6
+
+# urllib3 - pip's vendored copy inside the same dormant wheel; real
+# top-level urllib3 installed is 2.8.0 (fixed). Same fix should cover this,
+# unverified until next rebuild/rescan (advisories published 2026-09-29).
+CVE-2026-97687 exp:2026-10-15 # urllib3: pip-vendored copy in dormant ensurepip wheel, same fix should apply
+CVE-2026-97689 exp:2026-10-15 # urllib3: pip-vendored copy in dormant ensurepip wheel, same fix should apply

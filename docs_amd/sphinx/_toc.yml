@@ -24,6 +24,11 @@ subtrees:
   entries:
   - file: examples/rocopt-example.rst
 
+- caption: Security
+  entries:
+  - file: security.rst
+    title: Vulnerability exceptions
+
 - caption: About
   entries:
   - file: license.rst

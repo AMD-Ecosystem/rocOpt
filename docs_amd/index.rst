@@ -36,6 +36,10 @@ The rocOpt code is open and hosted at
     
      * :doc:`rocOpt Examples <examples/rocopt-example>`
 
+  .. grid-item-card:: Security
+
+     * :doc:`Vulnerability exceptions <security>`
+
 To contribute to the documentation refer to
 `Contributing to AMD Data Science  <https://rocm.docs.amd.com/projects/rocm-ds/en/latest/contribute/contributing.html>`_.
 
