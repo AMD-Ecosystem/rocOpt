@@ -1,8 +1,7 @@
 # Trivy vulnerability ignore list for rocOpt container images
 #
-# See docs_amd/security.rst (rendered at the "Security" page in the official
-# rocOpt docs) for full justification and review record. Do not add an
-# entry here without a matching section there.
+# See VULNERABILITY_MITIGATIONS.md for full justification and review record.
+# Do not add an entry here without a matching section in that file.
 #
 # Format: <CVE/GHSA-ID>  exp:<YYYY-MM-DD>  # one-line reason
 # The exp: date forces Trivy to stop suppressing the finding and fail the
