@@ -55,9 +55,8 @@ Scope and process
 - **Exception mechanism:** findings pending rebuild confirmation are
   suppressed in CI with a
   `.trivyignore <https://github.com/ROCm-DS/rocOpt/blob/main/.trivyignore>`_
-  file. Every entry there has a matching write-up in
-  `VULNERABILITY_EXCEPTIONS.md <https://github.com/ROCm-DS/rocOpt/blob/main/VULNERABILITY_EXCEPTIONS.md>`_,
-  the engineering source of truth for this page.
+  file. Every entry there has a matching section on this page, which is the
+  source of truth for the justification and review record.
 - **Review cadence:** each exception is reviewed against a freshly rebuilt
   image; once confirmed fixed, the exception is removed rather than
   renewed.
