@@ -11,12 +11,31 @@ set(USE_ROCM OFF CACHE BOOL "Build with ROCm instead of CUDA")
 
 if(USE_ROCM)
     message(STATUS "libcuopt-python: ROCm build -- libcuopt.so is already built by the C++ step.")
-    message(STATUS "libcuopt-python: Only installing the Python runtime loader (load.py).")
+    message(STATUS "libcuopt-python: Packaging the pre-built libcuopt.so alongside the Python runtime loader (load.py).")
 
     # Minimal project; no GPU compiler needed for pure-Python packaging.
     project(libcuopt-python VERSION 26.4.0 LANGUAGES CXX)
 
-    # Nothing else to do -- scikit-build-core will package the Python files.
+    # The C++ step (./build.sh --use-rocm libcuopt) already compiled
+    # libcuopt.so into cpp/build/. This function used to return() here
+    # without installing anything, so the published wheel shipped only the
+    # Python loader (load.py) and never the compiled library itself.
+    # load.py's _load_wheel_installation() looks for the library at
+    # <package>/lib64/libcuopt.so -- matching the layout NVIDIA's CUDA wheel
+    # uses -- which was never populated, so `import cuopt` failed everywhere
+    # outside of this project's own Docker image (which works around it by
+    # hardcoding cpp/build/ onto LD_LIBRARY_PATH instead of relying on the
+    # wheel being self-contained).
+    set(_rocm_libcuopt_so "${CMAKE_CURRENT_LIST_DIR}/../../cpp/build/libcuopt.so")
+    if(NOT EXISTS "${_rocm_libcuopt_so}")
+        message(FATAL_ERROR
+            "libcuopt-python: USE_ROCM is set but ${_rocm_libcuopt_so} does "
+            "not exist. Build libcuopt first: ./build.sh --use-rocm libcuopt")
+    endif()
+
+    install(FILES "${_rocm_libcuopt_so}" DESTINATION libcuopt/lib64)
+
+    # scikit-build-core will package the rest of the Python files alongside it.
     return()
 endif()
 
