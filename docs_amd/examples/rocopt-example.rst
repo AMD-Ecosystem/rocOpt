@@ -82,10 +82,9 @@ As described in :ref:`install-rocopt`, the rocOpt component requires the followi
 
     .. code-block:: bash
 
-       cd ~/rocopt-working
-       export GH_USERNAME=<your-github-username>    # repo is private
-       export GH_TOKEN=<your-PAT>
-       ./scripts/build-image.sh                      # tags rocopt:amd-integration
+       cd rocopt
+       git checkout release/rocopt-26.07
+       ./scripts/build-image.sh
 
     Default branch is ``amd-integration``, which contains these notebooks. To
     pin a different branch pass ``--branch <name>``.
