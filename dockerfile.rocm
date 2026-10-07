@@ -104,14 +104,19 @@ ENV DEBIAN_FRONTEND=""
 SHELL ["/bin/bash", "-c"]
 
 # Clone the rocopt repository (replaces the prior bind-mount workflow).
-# Repo:   https://github.com/AMD-Ecosystem/rocOpt.git  (public mirror; default
-#         branch is `main`, confirmed via that remote's HEAD symref)
-# Branch: main  (i.e. origin/<branch> on the remote; `git clone --branch
+# Repo:   https://github.com/AMD-Ecosystem/rocOpt.git  (public mirror)
+# Branch: amd-integration  -- deliberately NOT the repo's own HEAD/default
+#         branch (`main`). The ROCm port -- including this Dockerfile and
+#         conda/environments/all_rocm7.yaml, which the builder stage below
+#         requires -- only exists on amd-integration; `main` carries only the
+#         upstream CUDA environment files and has diverged by hundreds of
+#         commits. (i.e. origin/<branch> on the remote; `git clone --branch
 #         <name>` resolves <name> against the remote being cloned, and after
 #         the clone it becomes refs/remotes/origin/<name> inside the image.)
 #
-# The default repo-host above is public, so GH_USERNAME/GH_TOKEN are not
-# required and the clone falls back to anonymous HTTPS automatically.
+# amd-integration lives on the same public mirror as above, so GH_USERNAME/
+# GH_TOKEN are not required and the clone falls back to anonymous HTTPS
+# automatically.
 #
 # To build from AMD's private internal fork instead, override both args and
 # pass credentials at build time:
@@ -129,7 +134,7 @@ SHELL ["/bin/bash", "-c"]
 # NOTE: build args are visible in `docker history`, so do NOT push the
 # resulting image to a public registry without re-building cleanly first.
 ARG ROCOPT_REPO_HOST=github.com/AMD-Ecosystem/rocOpt.git
-ARG ROCOPT_BRANCH=main
+ARG ROCOPT_BRANCH=amd-integration
 ARG GH_USERNAME=""
 ARG GH_TOKEN=""
 # Cache-bust for the clone layer.  `git clone --branch <name>` always fetches

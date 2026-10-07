@@ -40,7 +40,10 @@ SUMMARY_PREFIX="BUILD"
 # ---------------------------------------------------------------------------
 # Defaults (must stay in sync with the Dockerfile's ARG defaults)
 # ---------------------------------------------------------------------------
-DEFAULT_BRANCH="main"
+# NOT the repo's HEAD/default branch (`main`) -- `main` doesn't have the ROCm
+# port at all (no dockerfile.rocm, no conda/environments/all_rocm7.yaml); the
+# port only lives on amd-integration, hundreds of commits apart from main.
+DEFAULT_BRANCH="amd-integration"
 # Auto-detect from rocminfo when unset; pass --gpu-arch to override.
 DEFAULT_GPU_ARCH=""
 # Public mirror; reachable anonymously, so GH_USERNAME/GH_TOKEN below are
