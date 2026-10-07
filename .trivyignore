@@ -20,14 +20,14 @@
 
 # msgpack - pip's vendored copy inside the dormant ensurepip wheel; real
 # top-level msgpack installed is 1.2.1 (fixed). Fix already merged.
-GHSA-6v7p-g79w-8964 exp:2026-10-15 # msgpack: pip-vendored copy in dormant ensurepip wheel, fix merged e2fba1f6
+GHSA-6v7p-g79w-8964 exp:2027-10-15 # msgpack: pip-vendored copy in dormant ensurepip wheel, fix merged e2fba1f6
 
 # setuptools - version string referenced inside the same dormant wheel;
 # real top-level setuptools installed is 80.10.2 (fixed). Fix already merged.
-CVE-2025-47273 exp:2026-10-15 # setuptools: referenced in dormant ensurepip wheel, fix merged e2fba1f6
+CVE-2025-47273 exp:2027-10-15 # setuptools: referenced in dormant ensurepip wheel, fix merged e2fba1f6
 
 # urllib3 - pip's vendored copy inside the same dormant wheel; real
 # top-level urllib3 installed is 2.8.0 (fixed). Same fix should cover this,
 # unverified until next rebuild/rescan (advisories published 2026-09-29).
-CVE-2026-97687 exp:2026-10-15 # urllib3: pip-vendored copy in dormant ensurepip wheel, same fix should apply
-CVE-2026-97689 exp:2026-10-15 # urllib3: pip-vendored copy in dormant ensurepip wheel, same fix should apply
+CVE-2026-97687 exp:2027-10-15 # urllib3: pip-vendored copy in dormant ensurepip wheel, same fix should apply
+CVE-2026-97689 exp:2027-10-15 # urllib3: pip-vendored copy in dormant ensurepip wheel, same fix should apply
