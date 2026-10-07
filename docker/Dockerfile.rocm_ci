@@ -389,21 +389,27 @@ RUN for dir in ${CONDA_DIR}/envs/${CONDA_ENV_NAME} /rocopt-release; do \
 # *runtime* version, which does exist in the release image; rewriting a vendored
 # artifact would be a change we neither need nor want to own.
 #
+# build.sh pip-installs libcuopt before this pass, and the later `pip wheel`
+# copies cpp/build/libcuopt.so into dist/*.whl at the same moment.  Those are
+# separate files from cpp/build/libcuopt.so: patching the build tree leaves
+# site-packages/libcuopt/.../libcuopt.so and the published wheel still pointing
+# at /opt/rocm-${ROCM_BUILD_VERSION}.  The rocopt_base gate scans the installed
+# copy, so both copies have to be rewritten here.  Wheel contents are unpacked,
+# patched, and repacked so RECORD hashes stay consistent.
+#
 # --force-rpath keeps the entry as DT_RPATH instead of converting it to
 # DT_RUNPATH, so this pass removes the dangling directories without altering
 # lookup semantics for transitive dependencies.
 RUN set -euo pipefail && \
+    source "${CONDA_DIR}/bin/activate" "${CONDA_ENV_NAME}" && \
     CONDA_ENV_PREFIX="${CONDA_DIR}/envs/${CONDA_ENV_NAME}" && \
     PATCHED=0 && \
-    for obj in \
-        /rocopt-release/cpp/build/*.so* \
-        /rocopt-release/cpp/libmps_parser/build/*.so* \
-        "${CONDA_ENV_PREFIX}"/lib/libcuopt.so* \
-        "${CONDA_ENV_PREFIX}"/lib/libmps_parser.so* ; \
-    do \
-        [ -f "${obj}" ] || continue; \
-        CUR="$(patchelf --print-rpath "${obj}" 2>/dev/null)" || continue; \
-        [ -n "${CUR}" ] || continue; \
+    normalize_one() { \
+        local obj="$1"; \
+        [ -f "${obj}" ] || return 0; \
+        local CUR NEW; \
+        CUR="$(patchelf --print-rpath "${obj}" 2>/dev/null)" || return 0; \
+        [ -n "${CUR}" ] || return 0; \
         NEW="$(printf '%s' "${CUR}" \
             | sed -E -e 's|/opt/rocm-[0-9][0-9.]*/lib/llvm|/opt/rocm/llvm|g' \
                      -e 's|/opt/rocm-[0-9][0-9.]*|/opt/rocm|g')"; \
@@ -412,6 +418,46 @@ RUN set -euo pipefail && \
             echo "[rocopt] normalised RPATH: ${obj}"; \
             PATCHED=$((PATCHED + 1)); \
         fi; \
+    }; \
+    for obj in \
+        /rocopt-release/cpp/build/*.so* \
+        /rocopt-release/cpp/libmps_parser/build/*.so* \
+        "${CONDA_ENV_PREFIX}"/lib/libcuopt.so* \
+        "${CONDA_ENV_PREFIX}"/lib/libmps_parser.so* ; \
+    do \
+        normalize_one "${obj}"; \
+    done && \
+    for sp in "${CONDA_ENV_PREFIX}"/lib/python*/site-packages; do \
+        [ -d "${sp}" ] || continue; \
+        while IFS= read -r obj; do \
+            [ -n "${obj}" ] || continue; \
+            normalize_one "${obj}"; \
+        done < <(find "${sp}" -type f \( \
+            -name 'libcuopt.so' -o -name 'libcuopt.so.*' \
+            -o -name 'libmps_parser.so' -o -name 'libmps_parser.so.*' \)); \
+    done && \
+    for whl in /rocopt-release/dist/*.whl; do \
+        [ -f "${whl}" ] || continue; \
+        unpack_root="$(mktemp -d)"; \
+        python -m wheel unpack --dest "${unpack_root}" "${whl}"; \
+        unpacked="$(find "${unpack_root}" -mindepth 1 -maxdepth 1 -type d)"; \
+        [ -d "${unpacked}" ] || { echo "[rocopt] ERROR: wheel unpack produced no directory for ${whl}" >&2; exit 1; }; \
+        before="${PATCHED}"; \
+        while IFS= read -r obj; do \
+            [ -n "${obj}" ] || continue; \
+            normalize_one "${obj}"; \
+        done < <(find "${unpacked}" -type f \( \
+            -name 'libcuopt.so' -o -name 'libcuopt.so.*' \
+            -o -name 'libmps_parser.so' -o -name 'libmps_parser.so.*' \)); \
+        if [ "${PATCHED}" -gt "${before}" ]; then \
+            pack_dir="$(mktemp -d)"; \
+            python -m wheel pack --dest-dir "${pack_dir}" "${unpacked}"; \
+            rm -f "${whl}"; \
+            mv "${pack_dir}"/*.whl /rocopt-release/dist/; \
+            rm -rf "${pack_dir}"; \
+            echo "[rocopt] repacked wheel with normalised RPATH: $(basename "${whl}")"; \
+        fi; \
+        rm -rf "${unpack_root}"; \
     done && \
     echo "[rocopt] patchelf normalised ${PATCHED} object(s)"
 

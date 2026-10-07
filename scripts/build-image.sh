@@ -40,10 +40,12 @@ SUMMARY_PREFIX="BUILD"
 # ---------------------------------------------------------------------------
 # Defaults (must stay in sync with the Dockerfile's ARG defaults)
 # ---------------------------------------------------------------------------
-DEFAULT_BRANCH="awelling/use-open-source-rocm-ds"
+DEFAULT_BRANCH="main"
 # Auto-detect from rocminfo when unset; pass --gpu-arch to override.
 DEFAULT_GPU_ARCH=""
-DEFAULT_REPO_HOST="github.com/AMD-AIOSS/rocopt.git"
+# Public mirror; reachable anonymously, so GH_USERNAME/GH_TOKEN below are
+# optional unless --repo-host is pointed back at the private AIOSS fork.
+DEFAULT_REPO_HOST="github.com/AMD-Ecosystem/rocOpt.git"
 DEFAULT_DOCKERFILE="dockerfile.rocm"
 DEFAULT_BUILD_CONTEXT="."
 # Two-stage build: compile with the 7.1.1 toolchain (avoids the ROCm 7.2.x
@@ -105,8 +107,9 @@ Options:
 
 Environment:
   GH_USERNAME / GH_TOKEN   Forwarded as --build-arg to authenticate the
-                           in-image clone (the repo is currently private).
-                           Optional once the repo is public.
+                           in-image clone. Not needed for the default public
+                           repo-host; only required if --repo-host points at
+                           a private fork (e.g. github.com/AMD-AIOSS/rocopt.git).
 
 Output:
   Tags applied to a successful build:
@@ -180,13 +183,17 @@ if [ "${_avail_gb}" -lt 30 ]; then
     log_warn "only ${_avail_gb} GB free at ${_check_disk_dir}; rocopt build needs ~25 GB headroom"
 fi
 
-# Cred sanity.
+# Cred sanity.  The default --repo-host is the public AMD-Ecosystem mirror,
+# so no credentials are needed there; only warn about a missing/failing
+# anonymous clone when pointed at a known-private host.
 if [ -n "${GH_USERNAME:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
     log_info "GH credentials present (user=${GH_USERNAME}, token=${#GH_TOKEN} chars)"
     log_warn "GH_TOKEN will be embedded in image history.  Do NOT push this image to a public registry."
+elif [ "${REPO_HOST}" = "github.com/AMD-AIOSS/rocopt.git" ]; then
+    log_warn "GH_USERNAME / GH_TOKEN not set, but --repo-host is the private AIOSS fork"
+    log_warn "  anonymous clone will fail; set both env vars or switch --repo-host"
 else
-    log_warn "GH_USERNAME / GH_TOKEN not set; falling back to anonymous clone"
-    log_warn "  (this is correct once the rocopt repo is public; otherwise the build will fail)"
+    log_info "GH_USERNAME / GH_TOKEN not set; using anonymous clone of ${REPO_HOST}"
 fi
 
 # ---------------------------------------------------------------------------

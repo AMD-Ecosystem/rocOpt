@@ -75,6 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bzip2 \
     git \
     vim \
+    patchelf \
     && rm -rf /var/lib/apt/lists/*
 
 # Verify ROCm installation and create diagnostic output
@@ -103,29 +104,32 @@ ENV DEBIAN_FRONTEND=""
 SHELL ["/bin/bash", "-c"]
 
 # Clone the rocopt repository (replaces the prior bind-mount workflow).
-# Repo:   https://github.com/AMD-AIOSS/rocopt.git
-# Branch: awelling/use-open-source-rocm-ds  (i.e. origin/<branch> on the remote;
-#         `git clone --branch <name>` resolves <name> against the remote being
-#         cloned, and after the clone it becomes refs/remotes/origin/<name>
-#         inside the image.)
+# Repo:   https://github.com/AMD-Ecosystem/rocOpt.git  (public mirror; default
+#         branch is `main`, confirmed via that remote's HEAD symref)
+# Branch: main  (i.e. origin/<branch> on the remote; `git clone --branch
+#         <name>` resolves <name> against the remote being cloned, and after
+#         the clone it becomes refs/remotes/origin/<name> inside the image.)
 #
-# The repository is currently PRIVATE.  Pass credentials at build time:
+# The default repo-host above is public, so GH_USERNAME/GH_TOKEN are not
+# required and the clone falls back to anonymous HTTPS automatically.
+#
+# To build from AMD's private internal fork instead, override both args and
+# pass credentials at build time:
 #
 #   export GH_USERNAME=your-github-username
 #   export GH_TOKEN=ghp_yourPersonalAccessToken
 #
 #   docker build -f dockerfile.rocm \
+#       --build-arg ROCOPT_REPO_HOST=github.com/AMD-AIOSS/rocopt.git \
+#       --build-arg ROCOPT_BRANCH=<your-branch> \
 #       --build-arg GH_USERNAME \
 #       --build-arg GH_TOKEN \
 #       -t rocopt:rocm7.1 .
 #
-# When the repo becomes public, the --build-arg flags can be omitted and
-# the clone falls back to anonymous HTTPS.
-#
 # NOTE: build args are visible in `docker history`, so do NOT push the
 # resulting image to a public registry without re-building cleanly first.
-ARG ROCOPT_REPO_HOST=github.com/AMD-AIOSS/rocopt.git
-ARG ROCOPT_BRANCH=awelling/use-open-source-rocm-ds
+ARG ROCOPT_REPO_HOST=github.com/AMD-Ecosystem/rocOpt.git
+ARG ROCOPT_BRANCH=main
 ARG GH_USERNAME=""
 ARG GH_TOKEN=""
 # Cache-bust for the clone layer.  `git clone --branch <name>` always fetches
@@ -461,17 +465,78 @@ RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
 # portable /opt/rocm symlink.  AMD PyPI/conda packages (e.g. hip-python,
 # libomp configs) can embed an absolute path like /opt/rocm/... baked in
 # at this builder's ROCm version.  After this tree is copied into the ROCm
-# 7.2.3 runtime stage, /opt/rocm points at /opt/rocm, so the versioned
-# 7.1.1 paths would dangle.  Rewriting them to /opt/rocm (and normalizing the
-# 7.2.x lib/llvm layout to the standard llvm/ path) keeps them resolvable on
-# either ROCm version.  Binary files are skipped; their RPATHs already use the
-# /opt/rocm symlink because CMAKE_PREFIX_PATH above points at the symlink.
+# 7.2.3 runtime stage, that versioned 7.1.1 path no longer exists, so it
+# would dangle.  Rewriting it to /opt/rocm (and normalizing the 7.1.x
+# lib/llvm layout to the standard llvm/ path) keeps it resolvable on either
+# ROCm version.  Binary files are skipped here (--binary-files=without-match):
+# an in-place sed cannot safely rewrite an ELF dynamic section, which is why
+# the separate patchelf pass below exists.
 RUN for dir in ${CONDA_DIR}/envs/cuopt_dev /rocopt-release; do \
         grep -rl --binary-files=without-match '/opt/rocm-[0-9]' "$dir" 2>/dev/null \
         | xargs -r sed -i \
             -e 's|/opt/rocm-[0-9][0-9.]*/lib/llvm|/opt/rocm/llvm|g' \
             -e 's|/opt/rocm-[0-9][0-9.]*|/opt/rocm|g'; \
     done 2>/dev/null; true
+
+# Normalize versioned ROCm paths in the *ELF* RPATHs of our own build
+# products.
+#
+# CMAKE_PREFIX_PATH above points at the /opt/rocm symlink, but cmake resolves
+# symlinks to their realpath when it composes an RPATH, so libcuopt.so (and
+# libmps_parser.so) are actually linked here with /opt/rocm-7.1.1/lib
+# entries baked in.  That directory does not exist in the ROCm 7.2.3 runtime
+# stage, so those entries dangle once the object is copied over.  The loader
+# still finds ROCm because /opt/rocm/lib is present too, but shipping a
+# build-time absolute path in a released artifact is a defect in its own
+# right, and pip installs its own copy of libcuopt.so into
+# site-packages/libcuopt/lib64/ (see python/libcuopt/CMakeLists.txt) that
+# this sed pass never touches since it is a binary file.
+#
+# Scope is deliberately limited to objects rocopt itself builds.  Third-party
+# wheels (rmm, pylibraft, ...) also carry versioned RPATHs, but theirs name
+# the *runtime* version, which does exist in the release image; rewriting a
+# vendored artifact would be a change we neither need nor want to own.
+#
+# --force-rpath keeps the entry as DT_RPATH instead of converting it to
+# DT_RUNPATH, so this pass removes the dangling directories without altering
+# lookup semantics for transitive dependencies.
+RUN set -euo pipefail && \
+    source ${CONDA_DIR}/bin/activate cuopt_dev && \
+    CONDA_ENV_PREFIX="${CONDA_DIR}/envs/cuopt_dev" && \
+    PATCHED=0 && \
+    normalize_one() { \
+        local obj="$1"; \
+        [ -f "${obj}" ] || return 0; \
+        local CUR NEW; \
+        CUR="$(patchelf --print-rpath "${obj}" 2>/dev/null)" || return 0; \
+        [ -n "${CUR}" ] || return 0; \
+        NEW="$(printf '%s' "${CUR}" \
+            | sed -E -e 's|/opt/rocm-[0-9][0-9.]*/lib/llvm|/opt/rocm/llvm|g' \
+                     -e 's|/opt/rocm-[0-9][0-9.]*|/opt/rocm|g')"; \
+        if [ "${CUR}" != "${NEW}" ]; then \
+            patchelf --force-rpath --set-rpath "${NEW}" "${obj}"; \
+            echo "[rocopt] normalised RPATH: ${obj}"; \
+            PATCHED=$((PATCHED + 1)); \
+        fi; \
+    }; \
+    for obj in \
+        /rocopt-release/cpp/build/*.so* \
+        /rocopt-release/cpp/libmps_parser/build/*.so* \
+        "${CONDA_ENV_PREFIX}"/lib/libcuopt.so* \
+        "${CONDA_ENV_PREFIX}"/lib/libmps_parser.so* ; \
+    do \
+        normalize_one "${obj}"; \
+    done && \
+    for sp in "${CONDA_ENV_PREFIX}"/lib/python*/site-packages; do \
+        [ -d "${sp}" ] || continue; \
+        while IFS= read -r obj; do \
+            [ -n "${obj}" ] || continue; \
+            normalize_one "${obj}"; \
+        done < <(find "${sp}" -type f \( \
+            -name 'libcuopt.so' -o -name 'libcuopt.so.*' \
+            -o -name 'libmps_parser.so' -o -name 'libmps_parser.so.*' \)); \
+    done && \
+    echo "[rocopt] patchelf normalised ${PATCHED} object(s)"
 
 # CMake fetches RAFT/RMM source trees into cpp/build/_deps. Their Dockerfiles
 # are build inputs for those upstream projects, not images shipped by rocOpt,
