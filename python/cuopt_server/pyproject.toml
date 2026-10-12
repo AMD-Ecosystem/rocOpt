@@ -20,7 +20,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
-    "cuopt==1.0.*,>=0.0.0a0",
+    "rocopt==1.0.*,>=0.0.0a0",
     "fastapi",
     "jsonref==1.1.0",
     "msgpack-numpy==0.4.8",
@@ -30,6 +30,8 @@ dependencies = [
     "psutil>=6.0.0",
     "uvicorn==0.34.*",
 ] # Modified for ROCm-DS: removed cupy-cuda13x (provided by amd-cupy via amd-hipdf).
+  # cuopt -> rocopt: this repo's own engine package was renamed to rocopt; this
+  # dependency was left pointing at the old NVIDIA-origin name.
 classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python",
@@ -91,7 +93,3 @@ max_allowed_size_compressed = '75M'
 
 [tool.pytest.ini_options]
 testpaths = ["cuopt_server/tests"]
-
-build-backend = "setuptools.build_meta"
-dependencies-file = "../../dependencies.yaml"
-matrix-entry = "cuda_suffixed=true"

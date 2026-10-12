@@ -32,18 +32,16 @@ classifiers = [
 ]
 dependencies = [
     "rocopt-mps-parser==1.0.*,>=0.0.0a0",
-    "librmm==26.4.*,>=0.0.0a0",
-    "nvidia-cublas",
-    "nvidia-cudart",
-    "nvidia-cudss",
-    "nvidia-curand",
-    "nvidia-cusolver",
-    "nvidia-cusparse",
-    "nvidia-nvtx",
+    "amd-libhipmm==4.0.0",
     "rapids-logger==0.2.*,>=0.0.0a0",
     "cmake>=3.30.4",
     "ninja",
 ] # Modified for ROCm-DS: bypass rapids-build-backend, use scikit-build-core directly.
+  # librmm -> amd-libhipmm==4.0.0: matches the pin dockerfile.rocm/Dockerfile.rocm_ci
+  # already install from https://pypi.amd.com/rocm-7.2.3/simple (AMD_LIBHIPMM_WHEEL_URL).
+  # Dropped nvidia-cublas/cudart/cudss/curand/cusolver/cusparse/nvtx: no AMD pip
+  # package provides these; the real functional need is met by apt-installed
+  # hipblas/hipsparse/hiprand/hipsolver/rocrand instead (see dockerfile.rocm).
 
 [project.urls]
 # TODO(rocopt-docs): set Homepage to the rocOpt documentation URL when published
