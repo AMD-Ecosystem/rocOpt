@@ -42,13 +42,13 @@ Compatibility Matrix
 Option 1: Use a prebuilt Docker image
 =====================================
 
-The prebuilt image contains a fully configured rocOpt installation and all required dependencies pre-installed.
+The prebuilt docker image contains a fully configured rocOpt installation and all required dependencies pre-installed. The image can be found at `https://hub.docker.com/r/rocm/rocopt/tags <https://hub.docker.com/r/rocm/rocopt/tags>`__.
 
 1. Pull the Docker image.
 
    .. code-block:: bash
 
-      docker pull rocopt:rocopt-1.0.0.amd0_rocm7.2.3_ubuntu24.04
+      docker pull rocopt:rocopt-1.0.0.amd0_rocm7.2.3.ubuntu24.04_py3.13
 
 2. Start a Docker container using this image.
 
@@ -62,7 +62,11 @@ The prebuilt image contains a fully configured rocOpt installation and all requi
         --cap-add=SYS_PTRACE \
         --security-opt seccomp=unconfined \
         --ipc=host \
-        rocopt:rocopt-1.0.0.amd0_rocm7.2.3_ubuntu24.04
+        rocopt:rocopt-1.0.0.amd0_rocm7.2.3.ubuntu24.04_py3.13
+
+.. note::
+      
+   rocOpt container images have third-party vulnerabilities as explained in `Known vulnerability exceptions and customer mitigations <https://github.com/AMD-Ecosystem/rocOpt/blob/amd-integration/VULNERABILITY_MITIGATIONS.md>`__. Please review that content for additional information. 
 
 Option 2: Build from source
 ===========================
@@ -80,7 +84,7 @@ Option 2: Build from source
 
       docker build --file dockerfile.rocm --tag rocopt-rocm .
 
-   This will pull the ``rocopt-1.0.0.amd0_rocm7.2.3_ubuntu24.04`` image and install rocOpt along with its required dependencies (hipRAFT, hipMM, rocThrust, hipCUB, rocPRIM, rapids-cmake). The build stage compiles rocOpt against ROCm 7.1.1 (to avoid the ROCm 7.2.x MI300X codegen regression), while the resulting runtime image runs on the ROCm 7.2.3 runtime.
+   This will create the ``rocopt-rocm`` image and install rocOpt along with its required dependencies (hipRAFT, hipMM, rocThrust, hipCUB, rocPRIM, rapids-cmake). The build stage compiles rocOpt against ROCm 7.1.1 (to avoid the ROCm 7.2.x MI300X codegen regression), while the resulting runtime image runs on the ROCm 7.2.3 runtime.
 
 3. Launch a container based on the image.
 
@@ -215,7 +219,7 @@ Test your installation
 
 After starting the container, verify your installation is working correctly. The exact verification steps vary by use case — common checks include:
 
-- Confirming the rocOpt Python package is installed and importable:
+- Confirming the ``rocOpt`` Python package is installed and importable:
 
   .. code-block:: bash
 
