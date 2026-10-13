@@ -77,15 +77,14 @@ As described in :ref:`install-rocopt`, the rocOpt component requires the followi
   against ROCm 7.1.1 and runs on the ROCm 7.2.3 runtime.
 - A rocopt container image. Either:
 
-  - **Pull the prebuilt image** from the published Dockerfile (link TBD), or
-  - **Build from source** in this repo:
+  - **Pull the prebuilt image** from the published Dockerfile (found at `https://hub.docker.com/r/rocm/rocopt/tags <https://hub.docker.com/r/rocm/rocopt/tags>`__), or
+  - **Build from source** in this repo using the following steps:
 
     .. code-block:: bash
 
-       cd ~/rocopt-working
-       export GH_USERNAME=<your-github-username>    # repo is private
-       export GH_TOKEN=<your-PAT>
-       ./scripts/build-image.sh                      # tags rocopt:amd-integration
+       git clone -b amd-integration https://github.com/AMD-Ecosystem/rocOpt.git
+       cd rocOpt
+       ./scripts/build-image.sh
 
     Default branch is ``amd-integration``, which contains these notebooks. To
     pin a different branch pass ``--branch <name>``.
