@@ -102,6 +102,114 @@ Option 2: Build from source
 
       USE_ROCM=1 ./build.sh
 
+Option 3: Installing the rocOpt wheels in a ROCm container
+==========================================================
+
+Prerequisites
+-------------
+
+* An AMD GPU host with ROCm kernel support (``/dev/kfd`` and ``/dev/dri``
+  present). Validated on AMD Instinct MI300X and MI355X.
+* Docker (or Podman).
+
+Build steps
+------------
+
+1. Start a ROCm-enabled Ubuntu 24.04 container
+
+   .. code-block:: bash
+
+      docker run -it --rm \
+          --device=/dev/kfd --device=/dev/dri \
+          --group-add video \
+          --security-opt seccomp=unconfined \
+          rocm/dev-ubuntu-24.04:7.2.3 bash
+
+2. Create a Python 3.13 virtual environment
+
+   The ``rocopt`` and ``rocopt_mps_parser`` wheels are only published as
+   ``cp313-cp313``, so Python 3.13 is required:
+
+   .. code-block:: bash
+
+      apt-get update
+      apt-get install -y software-properties-common
+      add-apt-repository -y ppa:deadsnakes/ppa
+      apt-get update
+      apt-get install -y python3.13 python3.13-venv
+
+      python3.13 -m venv /opt/venv
+      source /opt/venv/bin/activate
+
+3. Install plain runtime dependencies
+
+   .. code-block:: bash
+      
+      pip install \
+         numpy pandas pyyaml numba pyarrow fastapi \
+         jsonref==1.1.0 msgpack==1.1.0 msgpack-numpy==0.4.8 \
+         psutil "uvicorn==0.34.*" requests
+
+4. Install the ROCm math/FFT system packages
+
+   ``libcuopt.so`` and ``cupy`` both need the ROCm math/FFT library suite at
+   dlopen time; the base image only ships the core HIP/HSA runtime:
+
+   .. code-block:: bash
+
+      apt install -y hipblas hipsparse hiprand hipsolver hipfft rocrand libtbb12
+
+5. Install the RAPIDS-DS dependency chain
+
+   .. code-block:: bash
+
+      pip install --extra-index-url=https://pypi.amd.com/rocm-7.2.3/simple/ \
+          rocm-llvm-python==7.2.3.562.46 \
+          hip-python==7.2.3.562.43 \
+          hip-python-as-cuda==7.2.3.562.43 \
+          numba-hip==0.1.6 \
+          amd-cupy==13.5.1 \
+          amd-rocmds-logger==1.0.0 \
+          amd-libhipmm==4.0.0 \
+          amd-hipmm==4.0.0 \
+          amd-libraft==1.0.0 \
+          amd-pylibraft==1.0.0 \
+          amd-libhipdf==3.0.0 \
+          amd-pylibhipdf==3.0.0 \
+          amd-hipdf==3.0.0
+
+6. Install rocopt
+
+   .. code-block:: bash
+
+      pip install --extra-index-url=https://pypi.amd.com/rocm-7.2.3/simple/ \
+          rocopt==1.0.0 \
+          librocopt==1.0.0 \
+          rocopt-server==1.0.0 \
+          rocopt-sh-client==1.0.0 \
+          rocopt-mps-parser==1.0.0
+
+      pip install requests  # rocopt_sh_client needs it, not pulled in by the above
+
+7. Symlink ``libcuopt.so`` into place
+
+   .. code-block:: bash
+
+      ln -s /opt/venv/lib/python3.13/site-packages/libcuopt/libcuopt/lib64 \
+            /opt/venv/lib/python3.13/site-packages/libcuopt/lib64
+
+8. Set required environment variables
+
+   .. code-block:: bash
+
+      export ROCM_HOME=/opt/rocm
+      export LD_LIBRARY_PATH=/opt/venv/lib/python3.13/site-packages/libcuopt/lib64:/opt/venv/lib/python3.13/site-packages/librmm/lib64:/opt/venv/lib/python3.13/site-packages/rapids_logger/lib64:/opt/venv/lib/python3.13/site-packages/cuopt_mps_parser:/opt/venv/lib/python3.13/site-packages/cuopt/linear_programming/data_model${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+   ``ROCM_HOME`` points ``cupy`` at the ROCm installation. ``LD_LIBRARY_PATH`` adds
+   the shared library directories the compiled extensions load from at
+   runtime. Persist both into ``/opt/venv/bin/activate`` so they survive new
+   shells.
+
 Test your installation
 ======================
 
