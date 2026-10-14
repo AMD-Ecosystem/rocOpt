@@ -82,11 +82,11 @@ As described in :ref:`install-rocopt`, the rocOpt component requires the followi
 
     .. code-block:: bash
 
-       git clone -b amd-integration https://github.com/AMD-Ecosystem/rocOpt.git
+       git clone -b release/rocopt-26.07 https://github.com/AMD-Ecosystem/rocOpt.git
        cd rocOpt
        ./scripts/build-image.sh
 
-    Default branch is ``amd-integration``, which contains these notebooks. To
+    Default branch is ``release/rocopt-26.07``, which contains these notebooks. To
     pin a different branch pass ``--branch <name>``.
 
 Quick start (in-image clone, no host mount)
@@ -120,7 +120,7 @@ Pull and run the prebuilt image from the registry:
      --group-add video --ipc=host \
      --shm-size 16G --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
      -p 8888:8888 \
-     rocopt:amd-integration
+     rocopt:release/rocopt-26.07
 
 The working directory is ``/rocopt-release`` with the ``cuopt_dev`` conda env
 auto-activated.
@@ -142,14 +142,14 @@ Python's built-in ``tarfile``:
 .. code-block:: bash
 
    cd /rocopt-release
-   BRANCH=amd-integration
+   BRANCH=release/rocopt-26.07
    curl -fsSL "https://github.com/AMD-Ecosystem/rocopt/archive/refs/heads/${BRANCH}.tar.gz" -o /tmp/rocopt.tar.gz
    python3 - <<'EOF'
    import tarfile, os, shutil
    SRC_SUB = "examples_notebook"
    DEST    = "/rocopt-release/examples_notebook"
    with tarfile.open("/tmp/rocopt.tar.gz") as tf:
-       root = tf.getnames()[0].split("/")[0]           # e.g. rocopt-amd-integration
+       root = tf.getnames()[0].split("/")[0]           # e.g. rocopt-release/rocopt-26.07
        prefix = f"{root}/{SRC_SUB}/"
        for m in tf.getmembers():
            if not m.name.startswith(prefix):
@@ -176,7 +176,7 @@ Python's built-in ``tarfile``:
 
    .. code-block:: bash
 
-      git clone --branch amd-integration --single-branch \
+      git clone --branch release/rocopt-26.07 --single-branch \
         https://github.com/AMD-Ecosystem/rocopt.git /tmp/rocopt
       cp -r /tmp/rocopt/examples_notebook /rocopt-release/
 
@@ -284,6 +284,6 @@ directory:
      -v "$HOME/rocopt-working:/workspace" \
      -v "$HOME/rocopt-working/datasets/cvrptw:/tmp/data:ro" \
      -w /workspace \
-     rocopt:amd-integration
+     rocopt:release/rocopt-26.07
 
 Then launch Jupyter with ``--notebook-dir /workspace/examples_notebook``.
