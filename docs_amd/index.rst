@@ -8,7 +8,7 @@
 rocOpt documentation
 ********************************************************************
 
-rocOpt is part of the `AMD Data Science toolkit <https://rocm.docs.amd.com/projects/rocm-ds/en/latest/>`__,
+rocOpt is part of the `AMD Data Science toolkit <https://rocm.docs.amd.com/projects/datascience/en/latest/>`__,
 an open-source software collection for high-performance data science applications.
 Forked from the RAPIDS® cuOpt project, rocOpt brings the same GPU-accelerated software library to the
 :doc:`ROCm <rocm:index>`/:doc:`HIP <hip:index>` stack while preserving API compatibility. 
@@ -37,7 +37,7 @@ The rocOpt code is open and hosted at
      * :doc:`rocOpt Examples <examples/rocopt-example>`
 
 To contribute to the documentation refer to
-`Contributing to AMD Data Science  <https://rocm.docs.amd.com/projects/rocm-ds/en/latest/contribute/contributing.html>`_.
+`Contributing to AMD Data Science  <https://rocm.docs.amd.com/projects/datascience/en/latest/contribute/contributing.html>`_.
 
 You can find licensing information on the
-`Licensing <https://rocm.docs.amd.com/projects/rocm-ds/en/latest/about/license.html>`_ page.
+`Licensing <https://rocm.docs.amd.com/projects/datascience/en/latest/about/license.html>`_ page.
