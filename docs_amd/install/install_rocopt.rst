@@ -93,11 +93,12 @@ Option 2: Build from source
         --build-arg ROCOPT_SOURCE_SHA=$(git rev-parse HEAD) \
         --tag rocopt-rocm .
 
-   Alternatively, ``scripts/build-image.sh --branch <branch>`` resolves the branch tip, passes these
-   arguments for you, and tags the image as ``rocopt:<branch>`` and ``rocopt:<sha7>``. Run
-   ``scripts/build-image.sh --help`` for all options.
-
    This will create the ``rocopt-rocm`` image and install rocOpt along with its required dependencies (hipRAFT, hipMM, rocThrust, hipCUB, rocPRIM, rapids-cmake). The build stage compiles rocOpt against ROCm 7.1.1 (to avoid the ROCm 7.2.x MI300X codegen regression), while the resulting runtime image runs on the ROCm 7.2.3 runtime.
+
+   Alternatively, ``scripts/build-image.sh --branch <branch>`` resolves the branch tip, passes these
+   arguments for you, and tags the image as ``rocopt:<branch>`` and ``rocopt:<sha7>``. To also tag the
+   image ``rocopt-rocm``, the name used in the next step, add ``--tag rocopt-rocm``. Run
+   ``scripts/build-image.sh --help`` for all options.
 
 3. Launch a container based on the image. rocOpt is already built and installed in the image; no further
    build step is needed.
