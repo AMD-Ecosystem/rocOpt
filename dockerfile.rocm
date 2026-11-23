@@ -267,10 +267,9 @@ ARG AMD_LIBRAFT_WHEEL_URL=
 ARG HIP_PYTHON_WHEEL_URL=
 ARG HIP_PYTHON_AS_CUDA_WHEEL_URL=
 ARG AMD_ROCMDS_LOGGER_WHEEL_URL=
-# amd-cupy is NOT published for cp313 on the open index, so it stays pinned to
-# the AMD Nexus wheel.  Declared here (same URL as the dedicated cupy install
-# step below) so the pip resolver can satisfy amd-hipdf's amd-cupy==13.* dep.
-ARG AMD_CUPY_WHEEL_URL=https://artifacts.aifoundry.amd.com/repository/release-rocmds-26.03-post-merge-checkpoint-cupy-rocm-manylinux2.28-python3.13-10-pypi/packages/amd-cupy/13.5.1/amd_cupy-13.5.1-cp313-cp313-manylinux_2_28_x86_64.whl
+# amd-cupy 13.5.1 (cp313) is published on the open AMD index as well; set this
+# only to pin an internal artifact.
+ARG AMD_CUPY_WHEEL_URL=
 ARG NUMBA_HIP_WHEEL_URL=
 ARG AMD_HIPMM_WHEEL_URL=
 ARG AMD_LIBHIPMM_WHEEL_URL=
@@ -364,19 +363,14 @@ RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
 
 # Install CuPy with ROCm/HIP support.
 #
-# Primary source: a pinned wheel from the AMD-AIOSS Nexus
-# (release-rocmds-26.03 post-merge-checkpoint cupy repo). Override via:
-#     --build-arg AMD_CUPY_WHEEL_URL=<other-url>
-# or leave empty to fall back to the AMD public PyPI index, then to a CuPy
-# source build.
+# Default source: amd-cupy==13.5.1 from the AMD public PyPI index
+# (${AMD_PYPI_INDEX_URL}), falling back to a CuPy source build.  To pin a
+# specific wheel instead (e.g. an AMD-internal Nexus artifact), pass:
+#     --build-arg AMD_CUPY_WHEEL_URL=<wheel-url>
 #
-# IMPORTANT: the default wheel is cp313-cp313 (Python 3.13 only) and is hosted
-# on the AMD-internal Nexus (artifacts.aifoundry.amd.com).  The build host must
-# have:
-#   (a) routing to that Nexus instance, AND
-#   (b) a conda env using Python 3.13 — the conda solver should pick 3.13 from
-#       all_rocm7.yaml's "python>=3.10,<3.14" constraint, but verify with
-#       `python --version` inside the image if installation fails.
+# IMPORTANT: the amd-cupy wheel is cp313-cp313 (Python 3.13 only), so the conda
+# env must use Python 3.13 — verify with `python --version` inside the image
+# if installation fails.
 #
 # CONDA_BUILD_CROSS_COMPILATION=0 avoids a ValueError in CuPy's build script
 # when the env var is set to an empty string by conda.
@@ -384,13 +378,13 @@ RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
 # NOTE: amd-cupy is also pinned in the wheel-install loop above (so that pip's
 # resolver can satisfy amd-hipdf's amd-cupy==13.* dep at that point).  This
 # block is kept because it preserves the three-tier fallback chain:
-#   Nexus wheel URL  →  AMD public PyPI  →  source build.
+#   AMD_CUPY_WHEEL_URL (if set)  →  AMD public PyPI  →  source build.
 # In the common path it is a no-op (pip reports "Requirement already satisfied").
 RUN source ${CONDA_DIR}/bin/activate cuopt_dev && \
     ( [ -n "${AMD_CUPY_WHEEL_URL}" ] && pip install --no-cache-dir \
         --trusted-host artifacts.aifoundry.amd.com \
         "${AMD_CUPY_WHEEL_URL}" ) \
-    || pip install --no-cache-dir amd-cupy --extra-index-url=https://pypi.amd.com/simple \
+    || pip install --no-cache-dir "amd-cupy==13.5.1" --extra-index-url="${AMD_PYPI_INDEX_URL}" \
     || ( CONDA_BUILD_CROSS_COMPILATION=0 pip install --no-cache-dir cupy )
 
 # -----------------------------------------------------------------------------
