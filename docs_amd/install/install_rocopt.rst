@@ -48,7 +48,7 @@ The prebuilt docker image contains a fully configured rocOpt installation and al
 
    .. code-block:: bash
 
-      docker pull rocopt:rocopt-1.0.0.amd0_rocm7.2.3.ubuntu24.04_py3.13
+      docker pull rocm/rocopt:rocopt-1.0.0.amd0_rocm7.2.3.ubuntu24.04_py3.13
 
 2. Start a Docker container using this image.
 
@@ -62,7 +62,7 @@ The prebuilt docker image contains a fully configured rocOpt installation and al
         --cap-add=SYS_PTRACE \
         --security-opt seccomp=unconfined \
         --ipc=host \
-        rocopt:rocopt-1.0.0.amd0_rocm7.2.3.ubuntu24.04_py3.13
+        rocm/rocopt:rocopt-1.0.0.amd0_rocm7.2.3.ubuntu24.04_py3.13
 
 .. note::
       
@@ -71,22 +71,37 @@ The prebuilt docker image contains a fully configured rocOpt installation and al
 Option 2: Build from source
 ===========================
 
-1. Clone the rocOpt repository.
+1. Clone the rocOpt repository. The ROCm port lives on the ``amd-integration`` branch; the repository's
+   default branch (``main``) does not contain ``dockerfile.rocm``.
 
    .. code-block:: bash
 
-      git clone https://github.com/AMD-Ecosystem/rocopt.git
-      cd rocopt
+      git clone --branch amd-integration https://github.com/AMD-Ecosystem/rocOpt.git
+      cd rocOpt
 
 2. Build the Docker image.
 
+   ``dockerfile.rocm`` does not build the files in your checkout: it clones the rocOpt source from GitHub
+   inside the image, at the branch given by ``ROCOPT_BRANCH`` (default ``amd-integration``). Local,
+   uncommitted changes are ignored. Pass the branch of your checkout and, optionally, its commit; the build
+   fails if the cloned branch tip does not match ``ROCOPT_SOURCE_SHA``.
+
    .. code-block:: bash
 
-      docker build --file dockerfile.rocm --tag rocopt-rocm .
+      docker build --file dockerfile.rocm \
+        --build-arg ROCOPT_BRANCH=$(git rev-parse --abbrev-ref HEAD) \
+        --build-arg ROCOPT_SOURCE_SHA=$(git rev-parse HEAD) \
+        --tag rocopt-rocm .
 
    This will create the ``rocopt-rocm`` image and install rocOpt along with its required dependencies (hipRAFT, hipMM, rocThrust, hipCUB, rocPRIM, rapids-cmake). The build stage compiles rocOpt against ROCm 7.1.1 (to avoid the ROCm 7.2.x MI300X codegen regression), while the resulting runtime image runs on the ROCm 7.2.3 runtime.
 
-3. Launch a container based on the image.
+   Alternatively, ``scripts/build-image.sh --branch <branch>`` resolves the branch tip, passes these
+   arguments for you, and tags the image as ``rocopt:<branch>`` and ``rocopt:<sha7>``. To also tag the
+   image ``rocopt-rocm``, the name used in the next step, add ``--tag rocopt-rocm``. Run
+   ``scripts/build-image.sh --help`` for all options.
+
+3. Launch a container based on the image. rocOpt is already built and installed in the image; no further
+   build step is needed.
 
    .. code-block:: bash
 
@@ -100,11 +115,11 @@ Option 2: Build from source
         --ipc=host \
         rocopt-rocm
 
-4. Inside the container, build the rocOpt C++ library.
+.. note::
 
-   .. code-block:: bash
-
-      USE_ROCM=1 ./build.sh
+   Developers who change C++ sources inside the container can rebuild with
+   ``./build.sh --use-rocm libcuopt``. This uses the container's ROCm 7.2.3 compiler, not the ROCm 7.1.1
+   compiler used to build the image, and overwrites the binaries shipped in the image.
 
 Option 3: Installing the rocOpt wheels in a ROCm container
 ==========================================================
